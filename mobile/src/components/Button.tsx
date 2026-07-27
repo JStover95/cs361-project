@@ -1,9 +1,10 @@
-import { Pressable, StyleSheet, Text } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text } from "react-native";
 
 type ButtonProps = {
   label: string;
   onPress: () => void;
   disabled?: boolean;
+  loading?: boolean;
   shape?: "pill" | "circle";
   color?: "grey" | "red";
 };
@@ -12,9 +13,12 @@ export function Button({
   label,
   onPress,
   disabled = false,
+  loading = false,
   shape = "pill",
   color = "grey",
 }: ButtonProps) {
+  const isDisabled = disabled || loading;
+
   return (
     <Pressable
       style={[
@@ -23,12 +27,21 @@ export function Button({
         color === "red" && styles.red,
       ]}
       onPress={onPress}
-      disabled={disabled}
+      disabled={isDisabled}
       accessibilityRole="button"
+      accessibilityState={{ disabled: isDisabled, busy: loading }}
     >
-      <Text style={[styles.label, shape === "circle" && styles.circleLabel]}>
-        {label}
-      </Text>
+      {loading ? (
+        <ActivityIndicator
+          size="small"
+          color="#000"
+          accessibilityLabel="Loading"
+        />
+      ) : (
+        <Text style={[styles.label, shape === "circle" && styles.circleLabel]}>
+          {label}
+        </Text>
+      )}
     </Pressable>
   );
 }

@@ -113,4 +113,36 @@ describe("TodayScreen", () => {
     expect(queryByText("Task deleted")).toBeNull();
     expect(getByText("Call mom")).toBeTruthy();
   });
+
+  it("toggles simulated network failure via the header switch", async () => {
+    const { getByText, getByLabelText, queryByText } = await renderToday([
+      {
+        title: "Call mom",
+        timeRequired: "30m",
+        importance: "High",
+        urgency: "High",
+      },
+    ]);
+
+    await completeIntro(getByText);
+    await fireEvent.press(getByText("Block Time"));
+
+    const failureSwitch = getByLabelText("Simulate network failure");
+    expect(failureSwitch).toBeTruthy();
+
+    await fireEvent(failureSwitch, "valueChange", true);
+
+    await fireEvent.press(getByLabelText("Delete"));
+    await fireEvent.press(getByText("Yes"));
+
+    expect(getByText("An error occured!")).toBeTruthy();
+    expect(getByText("Network request failed. Please try again.")).toBeTruthy();
+    expect(queryByText("Task deleted")).toBeNull();
+
+    await fireEvent.press(getByText("Go back"));
+    expect(queryByText("An error occured!")).toBeNull();
+    expect(
+      getByText("Are you sure you want to delete this task?")
+    ).toBeTruthy();
+  });
 });

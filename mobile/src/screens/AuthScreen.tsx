@@ -4,6 +4,8 @@ import { Title } from "../components/Title";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 
+export const LOGIN_DELAY_MS = 500;
+
 type AuthMode = "login" | "signup";
 
 type AuthScreenProps = {
@@ -15,6 +17,7 @@ export function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   const handleLoginPress = () => {
     if (mode === "signup") {
@@ -23,7 +26,14 @@ export function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
       return;
     }
 
-    onLoginSuccess?.();
+    setIsLoggingIn(true);
+    setTimeout(() => {
+      try {
+        onLoginSuccess?.();
+      } finally {
+        setIsLoggingIn(false);
+      }
+    }, LOGIN_DELAY_MS);
   };
 
   const handleSignUpPress = () => {
@@ -56,8 +66,17 @@ export function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
       </View>
 
       <View style={styles.buttons}>
-        <Button label="Login" onPress={handleLoginPress} />
-        <Button label="Sign Up" onPress={handleSignUpPress} />
+        <Button
+          label="Login"
+          onPress={handleLoginPress}
+          loading={isLoggingIn}
+          disabled={isLoggingIn}
+        />
+        <Button
+          label="Sign Up"
+          onPress={handleSignUpPress}
+          disabled={isLoggingIn}
+        />
       </View>
     </View>
   );

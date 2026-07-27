@@ -42,4 +42,18 @@ describe("Button", () => {
     await fireEvent.press(getByText("+"));
     expect(onPress).toHaveBeenCalledTimes(1);
   });
+
+  it("shows loading indicator and does not call onPress when loading", async () => {
+    const onPress = jest.fn();
+    const { getByLabelText, queryByText, getByRole } = await render(
+      <Button label="Login" onPress={onPress} loading />
+    );
+
+    expect(queryByText("Login")).toBeNull();
+    expect(getByLabelText("Loading")).toBeTruthy();
+
+    await fireEvent.press(getByRole("button"));
+
+    expect(onPress).not.toHaveBeenCalled();
+  });
 });

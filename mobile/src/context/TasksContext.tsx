@@ -9,6 +9,9 @@ import {
 } from "react";
 import { Importance, Task, Urgency } from "../types/task";
 
+export const NETWORK_ERROR_MESSAGE =
+  "Network request failed. Please try again.";
+
 type TaskFields = {
   title: string;
   timeRequired: string;
@@ -19,6 +22,9 @@ type TaskFields = {
 type TasksContextValue = {
   tasks: Task[];
   lastDeletedTaskId: string | null;
+  simulateFailure: boolean;
+  setSimulateFailure: (value: boolean) => void;
+  listTasks: () => Task[];
   addTask: (input: TaskFields) => Task;
   updateTask: (id: string, input: TaskFields) => void;
   deleteTask: (id: string) => void;
@@ -40,8 +46,17 @@ export function TasksProvider({ children }: { children: ReactNode }) {
   const [lastDeletedTaskId, setLastDeletedTaskId] = useState<string | null>(
     null
   );
+  const [simulateFailure, setSimulateFailure] = useState(false);
   const taskMapRef = useRef(taskMap);
   taskMapRef.current = taskMap;
+  const simulateFailureRef = useRef(simulateFailure);
+  simulateFailureRef.current = simulateFailure;
+
+  const throwIfSimulatingFailure = useCallback(() => {
+    if (simulateFailureRef.current) {
+      throw new Error(NETWORK_ERROR_MESSAGE);
+    }
+  }, []);
 
   const tasks = useMemo(
     () =>
@@ -51,47 +66,67 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     [taskMap]
   );
 
-  const addTask = useCallback((input: TaskFields) => {
-    const task: Task = {
-      id: createId(),
-      ...input,
-    };
-    setTaskMap((prev) => {
-      const next = new Map(prev);
-      next.set(task.id, task);
-      return next;
-    });
-    return task;
-  }, []);
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
 
-  const updateTask = useCallback((id: string, input: TaskFields) => {
-    setTaskMap((prev) => {
-      const existing = prev.get(id);
+  const listTasks = useCallback(() => {
+    throwIfSimulatingFailure();
+    return tasksRef.current;
+  }, [throwIfSimulatingFailure]);
+
+  const addTask = useCallback(
+    (input: TaskFields) => {
+      throwIfSimulatingFailure();
+      const task: Task = {
+        id: createId(),
+        ...input,
+      };
+      setTaskMap((prev) => {
+        const next = new Map(prev);
+        next.set(task.id, task);
+        return next;
+      });
+      return task;
+    },
+    [throwIfSimulatingFailure]
+  );
+
+  const updateTask = useCallback(
+    (id: string, input: TaskFields) => {
+      throwIfSimulatingFailure();
+      setTaskMap((prev) => {
+        const existing = prev.get(id);
+        if (!existing || existing.deleted) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.set(id, { ...existing, ...input });
+        return next;
+      });
+    },
+    [throwIfSimulatingFailure]
+  );
+
+  const deleteTask = useCallback(
+    (id: string) => {
+      throwIfSimulatingFailure();
+      const existing = taskMapRef.current.get(id);
       if (!existing || existing.deleted) {
-        return prev;
+        return;
       }
-      const next = new Map(prev);
-      next.set(id, { ...existing, ...input });
-      return next;
-    });
-  }, []);
-
-  const deleteTask = useCallback((id: string) => {
-    const existing = taskMapRef.current.get(id);
-    if (!existing || existing.deleted) {
-      return;
-    }
-    setTaskMap((prev) => {
-      const current = prev.get(id);
-      if (!current || current.deleted) {
-        return prev;
-      }
-      const next = new Map(prev);
-      next.set(id, { ...current, deleted: true });
-      return next;
-    });
-    setLastDeletedTaskId(id);
-  }, []);
+      setTaskMap((prev) => {
+        const current = prev.get(id);
+        if (!current || current.deleted) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.set(id, { ...current, deleted: true });
+        return next;
+      });
+      setLastDeletedTaskId(id);
+    },
+    [throwIfSimulatingFailure]
+  );
 
   const undoDelete = useCallback(() => {
     setLastDeletedTaskId((prevId) => {
@@ -115,12 +150,24 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     () => ({
       tasks,
       lastDeletedTaskId,
+      simulateFailure,
+      setSimulateFailure,
+      listTasks,
       addTask,
       updateTask,
       deleteTask,
       undoDelete,
     }),
-    [tasks, lastDeletedTaskId, addTask, updateTask, deleteTask, undoDelete]
+    [
+      tasks,
+      lastDeletedTaskId,
+      simulateFailure,
+      listTasks,
+      addTask,
+      updateTask,
+      deleteTask,
+      undoDelete,
+    ]
   );
 
   return (

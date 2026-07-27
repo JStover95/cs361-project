@@ -1,6 +1,11 @@
+import { useState } from "react";
 import { fireEvent, render } from "@testing-library/react-native";
 import { Pressable, Text, View } from "react-native";
-import { TasksProvider, useTasks } from "./TasksContext";
+import {
+  NETWORK_ERROR_MESSAGE,
+  TasksProvider,
+  useTasks,
+} from "./TasksContext";
 
 function TasksProbe() {
   const {
@@ -87,6 +92,105 @@ function TasksProbe() {
       </Pressable>
       <Pressable accessibilityRole="button" onPress={undoDelete}>
         <Text>Undo Delete</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function FailureProbe() {
+  const {
+    tasks,
+    simulateFailure,
+    setSimulateFailure,
+    listTasks,
+    addTask,
+    updateTask,
+    deleteTask,
+  } = useTasks();
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const run = (action: () => void) => {
+    try {
+      action();
+      setActionError(null);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "error");
+    }
+  };
+
+  return (
+    <View>
+      <Text testID="task-count">{tasks.length}</Text>
+      <Text testID="simulate-failure">{simulateFailure ? "on" : "off"}</Text>
+      <Text testID="action-error">{actionError ?? "none"}</Text>
+      {tasks.map((task) => (
+        <Text key={task.id} testID={`task-${task.id}`}>
+          {task.title}|{task.timeRequired}|{task.importance}|{task.urgency}
+        </Text>
+      ))}
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => setSimulateFailure(true)}
+      >
+        <Text>Enable Failure</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => setSimulateFailure(false)}
+      >
+        <Text>Disable Failure</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() =>
+          run(() =>
+            addTask({
+              title: "Apple",
+              timeRequired: "30m",
+              importance: "Low",
+              urgency: "High",
+            })
+          )
+        }
+      >
+        <Text>Add Apple</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() =>
+          run(() => {
+            const first = tasks[0];
+            if (first) {
+              updateTask(first.id, {
+                title: "Updated",
+                timeRequired: "2h",
+                importance: "High",
+                urgency: "High",
+              });
+            }
+          })
+        }
+      >
+        <Text>Update First</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() =>
+          run(() => {
+            const first = tasks[0];
+            if (first) {
+              deleteTask(first.id);
+            }
+          })
+        }
+      >
+        <Text>Delete First</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => run(() => listTasks())}
+      >
+        <Text>List Tasks</Text>
       </Pressable>
     </View>
   );
@@ -194,5 +298,53 @@ describe("TasksContext", () => {
     expect(getByTestId("task-count").props.children).toBe(1);
     expect(getByText(/Zebra\|1h\|High\|Low/)).toBeTruthy();
     expect(queryByText(/Apple\|30m\|Low\|High/)).toBeNull();
+  });
+
+  it("throws on add, update, delete, and list when simulateFailure is enabled", async () => {
+    const { getByText, getByTestId } = await render(
+      <TasksProvider>
+        <FailureProbe />
+      </TasksProvider>
+    );
+
+    await fireEvent.press(getByText("Add Apple"));
+    expect(getByTestId("task-count").props.children).toBe(1);
+    expect(getByTestId("action-error").props.children).toBe("none");
+
+    await fireEvent.press(getByText("Enable Failure"));
+    expect(getByTestId("simulate-failure").props.children).toBe("on");
+
+    await fireEvent.press(getByText("Add Apple"));
+    expect(getByTestId("action-error").props.children).toBe(
+      NETWORK_ERROR_MESSAGE
+    );
+    expect(getByTestId("task-count").props.children).toBe(1);
+
+    await fireEvent.press(getByText("Update First"));
+    expect(getByTestId("action-error").props.children).toBe(
+      NETWORK_ERROR_MESSAGE
+    );
+    expect(getByText(/Apple\|30m\|Low\|High/)).toBeTruthy();
+
+    await fireEvent.press(getByText("Delete First"));
+    expect(getByTestId("action-error").props.children).toBe(
+      NETWORK_ERROR_MESSAGE
+    );
+    expect(getByTestId("task-count").props.children).toBe(1);
+
+    await fireEvent.press(getByText("List Tasks"));
+    expect(getByTestId("action-error").props.children).toBe(
+      NETWORK_ERROR_MESSAGE
+    );
+
+    await fireEvent.press(getByText("Disable Failure"));
+    expect(getByTestId("simulate-failure").props.children).toBe("off");
+
+    await fireEvent.press(getByText("List Tasks"));
+    expect(getByTestId("action-error").props.children).toBe("none");
+
+    await fireEvent.press(getByText("Update First"));
+    expect(getByTestId("action-error").props.children).toBe("none");
+    expect(getByText(/Updated\|2h\|High\|High/)).toBeTruthy();
   });
 });

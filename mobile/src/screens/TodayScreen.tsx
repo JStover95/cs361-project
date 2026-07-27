@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button } from "../components/Button";
 import { TaskBottomSheet } from "../components/TaskBottomSheet";
@@ -26,7 +33,12 @@ const HOURS = [
 ];
 
 export function TodayScreen() {
-  const { lastDeletedTaskId, undoDelete } = useTasks();
+  const {
+    lastDeletedTaskId,
+    undoDelete,
+    simulateFailure,
+    setSimulateFailure,
+  } = useTasks();
   const [showIntro, setShowIntro] = useState(true);
   const [showTooltip, setShowTooltip] = useState(false);
 
@@ -38,7 +50,13 @@ export function TodayScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <View style={styles.header}>
+        <View style={styles.headerSpacer} />
         <Title text="Channtto" />
+        <Switch
+          accessibilityLabel="Simulate network failure"
+          value={simulateFailure}
+          onValueChange={setSimulateFailure}
+        />
       </View>
 
       <View style={styles.body}>
@@ -93,7 +111,13 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: "#fff",
     paddingVertical: 14,
+    paddingHorizontal: 24,
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
+  },
+  headerSpacer: {
+    width: 51,
   },
   body: {
     flex: 1,

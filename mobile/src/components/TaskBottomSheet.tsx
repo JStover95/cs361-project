@@ -10,6 +10,7 @@ import { useTasks } from "../context/TasksContext";
 import { Importance, Task, Urgency } from "../types/task";
 import { Button } from "./Button";
 import { DeleteConfirmation } from "./DeleteConfirmation";
+import { ErrorModal } from "./ErrorModal";
 import { SwipeToDelete } from "./SwipeToDelete";
 import { TaskCard } from "./TaskCard";
 import { TaskForm } from "./TaskForm";
@@ -17,17 +18,38 @@ import { TaskForm } from "./TaskForm";
 type SheetMode = "list" | "creating" | "updating" | "deleting";
 
 export function TaskBottomSheet() {
-  const { tasks, addTask, updateTask, deleteTask } = useTasks();
+  const { tasks, listTasks, addTask, updateTask, deleteTask } = useTasks();
   const sheetRef = useRef<BottomSheet>(null);
   const [mode, setMode] = useState<SheetMode>("list");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [returnMode, setReturnMode] = useState<SheetMode>("list");
+  const [listItems, setListItems] = useState<Task[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
 
   const snapPoints = useMemo(() => ["12%", "55%", "90%"], []);
 
   useEffect(() => {
     sheetRef.current?.snapToIndex(1);
   }, [mode]);
+
+  const runAction = useCallback((action: () => void) => {
+    try {
+      action();
+      setError(null);
+      setRetryAction(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+      setRetryAction(() => () => runAction(action));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mode !== "list") {
+      return;
+    }
+    runAction(() => setListItems(listTasks()));
+  }, [mode, tasks, listTasks, runAction]);
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.id === selectedTaskId) ?? null,
@@ -56,10 +78,12 @@ export function TaskBottomSheet() {
       importance: Importance;
       urgency: Urgency;
     }) => {
-      addTask(values);
-      goToList();
+      runAction(() => {
+        addTask(values);
+        goToList();
+      });
     },
-    [addTask, goToList]
+    [addTask, goToList, runAction]
   );
 
   const handleUpdate = useCallback(
@@ -72,10 +96,12 @@ export function TaskBottomSheet() {
       if (!selectedTaskId) {
         return;
       }
-      updateTask(selectedTaskId, values);
-      goToList();
+      runAction(() => {
+        updateTask(selectedTaskId, values);
+        goToList();
+      });
     },
-    [selectedTaskId, updateTask, goToList]
+    [selectedTaskId, updateTask, goToList, runAction]
   );
 
   const handleRequestDelete = useCallback(() => {
@@ -90,15 +116,33 @@ export function TaskBottomSheet() {
   }, []);
 
   const handleConfirmDelete = useCallback(() => {
-    if (selectedTaskId) {
-      deleteTask(selectedTaskId);
+    if (!selectedTaskId) {
+      return;
     }
-    goToList();
-  }, [selectedTaskId, deleteTask, goToList]);
+    runAction(() => {
+      deleteTask(selectedTaskId);
+      goToList();
+    });
+  }, [selectedTaskId, deleteTask, goToList, runAction]);
 
   const handleCancelDelete = useCallback(() => {
     setMode(returnMode);
   }, [returnMode]);
+
+  const handleGoBack = useCallback(() => {
+    setError(null);
+    setRetryAction(null);
+  }, []);
+
+  const handleTryAgain = useCallback(() => {
+    if (!retryAction) {
+      return;
+    }
+    const retry = retryAction;
+    setError(null);
+    setRetryAction(null);
+    retry();
+  }, [retryAction]);
 
   const renderItem = useCallback(
     ({ item }: { item: Task }) => (
@@ -138,71 +182,81 @@ export function TaskBottomSheet() {
   );
 
   return (
-    <BottomSheet
-      ref={sheetRef}
-      snapPoints={snapPoints}
-      index={0}
-      enablePanDownToClose={false}
-      enableDynamicSizing={false}
-      backgroundStyle={styles.sheetBackground}
-      handleIndicatorStyle={styles.handleIndicator}
-      footerComponent={renderFooter}
-    >
-      {mode === "list" && (
-        <BottomSheetFlatList
-          data={tasks}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          ListHeaderComponent={renderListHeader}
-          contentContainerStyle={styles.listContent}
+    <>
+      <BottomSheet
+        ref={sheetRef}
+        snapPoints={snapPoints}
+        index={0}
+        enablePanDownToClose={false}
+        enableDynamicSizing={false}
+        backgroundStyle={styles.sheetBackground}
+        handleIndicatorStyle={styles.handleIndicator}
+        footerComponent={renderFooter}
+      >
+        {mode === "list" && (
+          <BottomSheetFlatList
+            data={listItems}
+            keyExtractor={(item) => item.id}
+            renderItem={renderItem}
+            ListHeaderComponent={renderListHeader}
+            contentContainerStyle={styles.listContent}
+          />
+        )}
+
+        {mode === "creating" && (
+          <BottomSheetView style={styles.formContainer}>
+            <Text style={styles.title}>Tasks</Text>
+            <TaskForm
+              mode="create"
+              initialValues={{
+                title: "",
+                timeRequired: "",
+                importance: "",
+                urgency: "",
+              }}
+              onSave={handleCreate}
+              onCancel={goToList}
+            />
+          </BottomSheetView>
+        )}
+
+        {mode === "updating" && selectedTask && (
+          <BottomSheetView style={styles.formContainer}>
+            <Text style={styles.title}>Tasks</Text>
+            <TaskForm
+              mode="update"
+              initialValues={{
+                title: selectedTask.title,
+                timeRequired: selectedTask.timeRequired,
+                importance: selectedTask.importance,
+                urgency: selectedTask.urgency,
+              }}
+              onSave={handleUpdate}
+              onCancel={goToList}
+              onDelete={handleRequestDelete}
+            />
+          </BottomSheetView>
+        )}
+
+        {mode === "deleting" && (
+          <BottomSheetView style={styles.formContainer}>
+            <Text style={styles.title}>Tasks</Text>
+            <DeleteConfirmation
+              onConfirm={handleConfirmDelete}
+              onCancel={handleCancelDelete}
+            />
+          </BottomSheetView>
+        )}
+      </BottomSheet>
+
+      {error && (
+        <ErrorModal
+          message={error}
+          onGoBack={handleGoBack}
+          onTryAgain={retryAction ? handleTryAgain : undefined}
         />
       )}
-
-      {mode === "creating" && (
-        <BottomSheetView style={styles.formContainer}>
-          <Text style={styles.title}>Tasks</Text>
-          <TaskForm
-            mode="create"
-            initialValues={{
-              title: "",
-              timeRequired: "",
-              importance: "",
-              urgency: "",
-            }}
-            onSave={handleCreate}
-            onCancel={goToList}
-          />
-        </BottomSheetView>
-      )}
-
-      {mode === "updating" && selectedTask && (
-        <BottomSheetView style={styles.formContainer}>
-          <Text style={styles.title}>Tasks</Text>
-          <TaskForm
-            mode="update"
-            initialValues={{
-              title: selectedTask.title,
-              timeRequired: selectedTask.timeRequired,
-              importance: selectedTask.importance,
-              urgency: selectedTask.urgency,
-            }}
-            onSave={handleUpdate}
-            onCancel={goToList}
-            onDelete={handleRequestDelete}
-          />
-        </BottomSheetView>
-      )}
-
-      {mode === "deleting" && (
-        <BottomSheetView style={styles.formContainer}>
-          <Text style={styles.title}>Tasks</Text>
-          <DeleteConfirmation
-            onConfirm={handleConfirmDelete}
-            onCancel={handleCancelDelete}
-          />
-        </BottomSheetView>
-      )}
-    </BottomSheet>
+    </>
   );
 }
 
