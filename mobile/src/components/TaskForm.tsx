@@ -5,6 +5,7 @@ import { getEisenhowerColor } from "../utils/eisenhower";
 import { validateTask } from "../utils/validateTask";
 import { Button } from "./Button";
 import { Dropdown } from "./Dropdown";
+import { ErrorModal } from "./ErrorModal";
 import { Input } from "./Input";
 
 type TaskFormProps = {
@@ -112,8 +113,6 @@ export function TaskForm({
         </View>
       </View>
 
-      {error && <Text style={styles.error}>{error}</Text>}
-
       <View style={styles.buttons}>
         <Button label="Save" onPress={handleSave} />
         <Button label="Cancel" onPress={onCancel} />
@@ -123,6 +122,10 @@ export function TaskForm({
         <View style={styles.deleteContainer}>
           <Button label="Delete" onPress={onDelete} color="red" />
         </View>
+      )}
+
+      {error && (
+        <ErrorModal message={error} onGoBack={() => setError(null)} />
       )}
     </View>
   );
@@ -156,11 +159,6 @@ const styles = StyleSheet.create({
   },
   half: {
     flex: 1,
-  },
-  error: {
-    color: "#EF4444",
-    marginBottom: 12,
-    fontSize: 14,
   },
   buttons: {
     flexDirection: "row",

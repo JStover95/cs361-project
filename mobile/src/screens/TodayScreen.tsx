@@ -5,6 +5,7 @@ import { Button } from "../components/Button";
 import { TaskBottomSheet } from "../components/TaskBottomSheet";
 import { Title } from "../components/Title";
 import { Tooltip } from "../components/Tooltip";
+import { WelcomeModal } from "../components/WelcomeModal";
 
 const HOURS = [
   "9:00am",
@@ -23,7 +24,13 @@ const HOURS = [
 ];
 
 export function TodayScreen() {
-  const [showTooltip, setShowTooltip] = useState(true);
+  const [showIntro, setShowIntro] = useState(true);
+  const [showTooltip, setShowTooltip] = useState(false);
+
+  const handleIntroFinish = () => {
+    setShowIntro(false);
+    setShowTooltip(true);
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
@@ -67,6 +74,8 @@ export function TodayScreen() {
       </View>
 
       <TaskBottomSheet />
+
+      {showIntro && <WelcomeModal onFinish={handleIntroFinish} />}
     </SafeAreaView>
   );
 }

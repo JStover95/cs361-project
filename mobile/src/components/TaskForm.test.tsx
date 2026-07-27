@@ -52,9 +52,9 @@ describe("TaskForm", () => {
     expect(getByText("Delete")).toBeTruthy();
   });
 
-  it("shows validation error and does not call onSave when fields are empty", async () => {
+  it("shows validation error modal and does not call onSave when fields are empty", async () => {
     const onSave = jest.fn();
-    const { getByText } = await render(
+    const { getByText, queryByText } = await render(
       <TaskForm
         mode="create"
         initialValues={emptyValues}
@@ -65,8 +65,13 @@ describe("TaskForm", () => {
 
     await fireEvent.press(getByText("Save"));
 
+    expect(getByText("An error occured!")).toBeTruthy();
     expect(getByText("All fields are required.")).toBeTruthy();
+    expect(queryByText("Try Again")).toBeNull();
     expect(onSave).not.toHaveBeenCalled();
+
+    await fireEvent.press(getByText("Go back"));
+    expect(queryByText("An error occured!")).toBeNull();
   });
 
   it("calls onSave with values when valid", async () => {
