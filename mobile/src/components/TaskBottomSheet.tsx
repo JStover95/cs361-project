@@ -25,11 +25,7 @@ export function TaskBottomSheet() {
   const snapPoints = useMemo(() => ["12%", "55%", "90%"], []);
 
   useEffect(() => {
-    if (mode === "list") {
-      sheetRef.current?.snapToIndex(1);
-    } else {
-      sheetRef.current?.snapToIndex(2);
-    }
+    sheetRef.current?.snapToIndex(1);
   }, [mode]);
 
   const selectedTask = useMemo(
