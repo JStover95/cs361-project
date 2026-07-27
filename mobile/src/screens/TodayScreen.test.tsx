@@ -1,10 +1,39 @@
 import { fireEvent, render } from "@testing-library/react-native";
-import { TasksProvider } from "../context/TasksContext";
+import { useEffect } from "react";
+import { View } from "react-native";
+import { TasksProvider, useTasks } from "../context/TasksContext";
 import { TodayScreen } from "./TodayScreen";
 
-function renderToday() {
+function SeedTasks({
+  tasks,
+}: {
+  tasks: Array<{
+    title: string;
+    timeRequired: string;
+    importance: "High" | "Low";
+    urgency: "High" | "Low";
+  }>;
+}) {
+  const { addTask } = useTasks();
+
+  useEffect(() => {
+    tasks.forEach((task) => addTask(task));
+  }, []);
+
+  return <View />;
+}
+
+function renderToday(
+  seed: Array<{
+    title: string;
+    timeRequired: string;
+    importance: "High" | "Low";
+    urgency: "High" | "Low";
+  }> = []
+) {
   return render(
     <TasksProvider>
+      <SeedTasks tasks={seed} />
       <TodayScreen />
     </TasksProvider>
   );
@@ -57,5 +86,31 @@ describe("TodayScreen", () => {
     await fireEvent.press(getByText("Block Time"));
 
     expect(queryByText("Start with blocking some time")).toBeNull();
+  });
+
+  it("shows undo toast after deleting a task and restores on Undo", async () => {
+    const { getByText, getByLabelText, queryByText } = await renderToday([
+      {
+        title: "Call mom",
+        timeRequired: "30m",
+        importance: "High",
+        urgency: "High",
+      },
+    ]);
+
+    await completeIntro(getByText);
+    await fireEvent.press(getByText("Block Time"));
+
+    await fireEvent.press(getByLabelText("Delete"));
+    await fireEvent.press(getByText("Yes"));
+
+    expect(queryByText("Call mom")).toBeNull();
+    expect(getByText("Task deleted")).toBeTruthy();
+    expect(getByText("Undo")).toBeTruthy();
+
+    await fireEvent.press(getByText("Undo"));
+
+    expect(queryByText("Task deleted")).toBeNull();
+    expect(getByText("Call mom")).toBeTruthy();
   });
 });

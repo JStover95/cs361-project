@@ -7,6 +7,7 @@ export type Task = {
   timeRequired: string;
   importance: Importance;
   urgency: Urgency;
+  deleted?: boolean;
 };
 
 export type TaskInput = {

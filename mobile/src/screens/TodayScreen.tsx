@@ -5,7 +5,9 @@ import { Button } from "../components/Button";
 import { TaskBottomSheet } from "../components/TaskBottomSheet";
 import { Title } from "../components/Title";
 import { Tooltip } from "../components/Tooltip";
+import { UndoToast } from "../components/UndoToast";
 import { WelcomeModal } from "../components/WelcomeModal";
+import { useTasks } from "../context/TasksContext";
 
 const HOURS = [
   "9:00am",
@@ -24,6 +26,7 @@ const HOURS = [
 ];
 
 export function TodayScreen() {
+  const { lastDeletedTaskId, undoDelete } = useTasks();
   const [showIntro, setShowIntro] = useState(true);
   const [showTooltip, setShowTooltip] = useState(false);
 
@@ -74,6 +77,8 @@ export function TodayScreen() {
       </View>
 
       <TaskBottomSheet />
+
+      <UndoToast taskId={lastDeletedTaskId} onUndo={undoDelete} />
 
       {showIntro && <WelcomeModal onFinish={handleIntroFinish} />}
     </SafeAreaView>
