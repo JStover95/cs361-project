@@ -5,6 +5,7 @@ type ButtonProps = {
   onPress: () => void;
   disabled?: boolean;
   shape?: "pill" | "circle";
+  color?: "grey" | "red";
 };
 
 export function Button({
@@ -12,10 +13,15 @@ export function Button({
   onPress,
   disabled = false,
   shape = "pill",
+  color = "grey",
 }: ButtonProps) {
   return (
     <Pressable
-      style={[styles.button, shape === "circle" && styles.circle]}
+      style={[
+        styles.button,
+        shape === "circle" && styles.circle,
+        color === "red" && styles.red,
+      ]}
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
@@ -45,6 +51,9 @@ const styles = StyleSheet.create({
     minWidth: 56,
     paddingHorizontal: 0,
     paddingVertical: 0,
+  },
+  red: {
+    backgroundColor: "#EF4444",
   },
   label: {
     fontSize: 16,

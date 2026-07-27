@@ -66,7 +66,7 @@ export function TodayScreen() {
         </ScrollView>
       </View>
 
-      <TaskBottomSheet onAddTask={() => {}} />
+      <TaskBottomSheet />
     </SafeAreaView>
   );
 }
