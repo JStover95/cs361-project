@@ -10,6 +10,7 @@ import { useTasks } from "../context/TasksContext";
 import { Importance, Task, Urgency } from "../types/task";
 import { Button } from "./Button";
 import { DeleteConfirmation } from "./DeleteConfirmation";
+import { SwipeToDelete } from "./SwipeToDelete";
 import { TaskCard } from "./TaskCard";
 import { TaskForm } from "./TaskForm";
 
@@ -82,6 +83,12 @@ export function TaskBottomSheet() {
     setMode("deleting");
   }, []);
 
+  const handleSwipeDelete = useCallback((task: Task) => {
+    setSelectedTaskId(task.id);
+    setReturnMode("list");
+    setMode("deleting");
+  }, []);
+
   const handleConfirmDelete = useCallback(() => {
     if (selectedTaskId) {
       deleteTask(selectedTaskId);
@@ -95,15 +102,17 @@ export function TaskBottomSheet() {
 
   const renderItem = useCallback(
     ({ item }: { item: Task }) => (
-      <TaskCard
-        title={item.title}
-        timeRequired={item.timeRequired}
-        importance={item.importance}
-        urgency={item.urgency}
-        onPress={() => handleSelectTask(item)}
-      />
+      <SwipeToDelete onDelete={() => handleSwipeDelete(item)}>
+        <TaskCard
+          title={item.title}
+          timeRequired={item.timeRequired}
+          importance={item.importance}
+          urgency={item.urgency}
+          onPress={() => handleSelectTask(item)}
+        />
+      </SwipeToDelete>
     ),
-    [handleSelectTask]
+    [handleSelectTask, handleSwipeDelete]
   );
 
   const renderListHeader = useCallback(

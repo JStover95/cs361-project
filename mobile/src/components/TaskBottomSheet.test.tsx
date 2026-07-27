@@ -174,4 +174,47 @@ describe("TaskBottomSheet", () => {
     ).toBeNull();
     expect(getByText("Update Task")).toBeTruthy();
   });
+
+  it("opens delete confirmation from list swipe Delete action and removes task", async () => {
+    const { getByText, getByLabelText, queryByText } = await renderSheet([
+      {
+        title: "Call mom",
+        timeRequired: "30m",
+        importance: "High",
+        urgency: "High",
+      },
+    ]);
+
+    await fireEvent.press(getByLabelText("Delete"));
+
+    expect(
+      getByText("Are you sure you want to delete this task?")
+    ).toBeTruthy();
+
+    await fireEvent.press(getByText("Yes"));
+
+    expect(queryByText("Call mom")).toBeNull();
+    expect(getByText("Tasks")).toBeTruthy();
+  });
+
+  it("returns to list mode when swipe delete confirmation is cancelled", async () => {
+    const { getByText, getByLabelText, queryByText } = await renderSheet([
+      {
+        title: "Call mom",
+        timeRequired: "30m",
+        importance: "High",
+        urgency: "High",
+      },
+    ]);
+
+    await fireEvent.press(getByLabelText("Delete"));
+    await fireEvent.press(getByText("Cancel"));
+
+    expect(
+      queryByText("Are you sure you want to delete this task?")
+    ).toBeNull();
+    expect(queryByText("Update Task")).toBeNull();
+    expect(getByText("Tasks")).toBeTruthy();
+    expect(getByText("Call mom")).toBeTruthy();
+  });
 });
