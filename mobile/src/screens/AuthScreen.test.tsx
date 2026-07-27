@@ -30,4 +30,15 @@ describe("AuthScreen", () => {
     await fireEvent.press(getByText("Login"));
     expect(queryByText("Confirm Password")).toBeNull();
   });
+
+  it("calls onLoginSuccess when Login is pressed in login mode", async () => {
+    const onLoginSuccess = jest.fn();
+    const { getByText } = await render(
+      <AuthScreen onLoginSuccess={onLoginSuccess} />
+    );
+
+    await fireEvent.press(getByText("Login"));
+
+    expect(onLoginSuccess).toHaveBeenCalledTimes(1);
+  });
 });

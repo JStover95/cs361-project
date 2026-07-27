@@ -6,7 +6,11 @@ import { Button } from "../components/Button";
 
 type AuthMode = "login" | "signup";
 
-export function AuthScreen() {
+type AuthScreenProps = {
+  onLoginSuccess?: () => void;
+};
+
+export function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -16,7 +20,10 @@ export function AuthScreen() {
     if (mode === "signup") {
       setConfirmPassword("");
       setMode("login");
+      return;
     }
+
+    onLoginSuccess?.();
   };
 
   const handleSignUpPress = () => {

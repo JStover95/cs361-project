@@ -1,4 +1,3 @@
-import React from "react";
 import { fireEvent, render } from "@testing-library/react-native";
 import { Button } from "./Button";
 
@@ -31,5 +30,16 @@ describe("Button", () => {
     await fireEvent.press(getByText("Login"));
 
     expect(onPress).not.toHaveBeenCalled();
+  });
+
+  it("renders circle shape label and fires onPress", async () => {
+    const onPress = jest.fn();
+    const { getByText } = await render(
+      <Button label="+" onPress={onPress} shape="circle" />
+    );
+
+    expect(getByText("+")).toBeTruthy();
+    await fireEvent.press(getByText("+"));
+    expect(onPress).toHaveBeenCalledTimes(1);
   });
 });

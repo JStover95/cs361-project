@@ -4,17 +4,25 @@ type ButtonProps = {
   label: string;
   onPress: () => void;
   disabled?: boolean;
+  shape?: "pill" | "circle";
 };
 
-export function Button({ label, onPress, disabled = false }: ButtonProps) {
+export function Button({
+  label,
+  onPress,
+  disabled = false,
+  shape = "pill",
+}: ButtonProps) {
   return (
     <Pressable
-      style={styles.button}
+      style={[styles.button, shape === "circle" && styles.circle]}
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
     >
-      <Text style={styles.label}>{label}</Text>
+      <Text style={[styles.label, shape === "circle" && styles.circleLabel]}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -29,8 +37,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     minWidth: 120,
   },
+  circle: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 28,
+    width: 56,
+    height: 56,
+    minWidth: 56,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+  },
   label: {
     fontSize: 16,
     color: "#000",
+  },
+  circleLabel: {
+    fontSize: 28,
+    lineHeight: 32,
   },
 });
