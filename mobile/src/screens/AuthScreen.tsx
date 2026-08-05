@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { StyleSheet, View } from "react-native";
-import { Title } from "../components/Title";
-import { Input } from "../components/Input";
 import { Button } from "../components/Button";
-
-export const LOGIN_DELAY_MS = 500;
+import { ErrorModal } from "../components/ErrorModal";
+import { Input } from "../components/Input";
+import { Title } from "../components/Title";
+import { useAuthContext } from "../context/AuthContext";
 
 type AuthMode = "login" | "signup";
 
@@ -13,33 +13,36 @@ type AuthScreenProps = {
 };
 
 export function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
+  const { login, signUp, isAuthenticating, error, clearError } =
+    useAuthContext();
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  const handleLoginPress = () => {
+  const handleLoginPress = async () => {
     if (mode === "signup") {
       setConfirmPassword("");
       setMode("login");
       return;
     }
 
-    setIsLoggingIn(true);
-    setTimeout(() => {
-      try {
-        onLoginSuccess?.();
-      } finally {
-        setIsLoggingIn(false);
-      }
-    }, LOGIN_DELAY_MS);
+    const success = await login(email, password);
+    if (success) {
+      onLoginSuccess?.();
+    }
   };
 
-  const handleSignUpPress = () => {
+  const handleSignUpPress = async () => {
     if (mode === "login") {
       setConfirmPassword("");
       setMode("signup");
+      return;
+    }
+
+    const success = await signUp(email, password, confirmPassword);
+    if (success) {
+      onLoginSuccess?.();
     }
   };
 
@@ -48,12 +51,18 @@ export function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
       <Title text="Channtto Scheduler" />
 
       <View style={styles.form}>
-        <Input label="Email" value={email} onChangeText={setEmail} />
+        <Input
+          label="Email"
+          value={email}
+          onChangeText={setEmail}
+          autoCapitalize="none"
+        />
         <Input
           label="Password"
           value={password}
           onChangeText={setPassword}
           secureTextEntry
+          autoCapitalize="none"
         />
         {mode === "signup" && (
           <Input
@@ -61,6 +70,7 @@ export function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
             value={confirmPassword}
             onChangeText={setConfirmPassword}
             secureTextEntry
+            autoCapitalize="none"
           />
         )}
       </View>
@@ -69,15 +79,18 @@ export function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
         <Button
           label="Login"
           onPress={handleLoginPress}
-          loading={isLoggingIn}
-          disabled={isLoggingIn}
+          loading={isAuthenticating && mode === "login"}
+          disabled={isAuthenticating}
         />
         <Button
           label="Sign Up"
           onPress={handleSignUpPress}
-          disabled={isLoggingIn}
+          loading={isAuthenticating && mode === "signup"}
+          disabled={isAuthenticating}
         />
       </View>
+
+      {error && <ErrorModal message={error} onGoBack={clearError} />}
     </View>
   );
 }

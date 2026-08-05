@@ -34,6 +34,19 @@ describe("Input", () => {
     expect(getByLabelText("Password").props.secureTextEntry).toBe(true);
   });
 
+  it("passes autoCapitalize through", async () => {
+    const { getByLabelText } = await render(
+      <Input
+        label="Email"
+        value=""
+        onChangeText={() => {}}
+        autoCapitalize="none"
+      />
+    );
+
+    expect(getByLabelText("Email").props.autoCapitalize).toBe("none");
+  });
+
   it("renders an optional placeholder", async () => {
     const { getByPlaceholderText } = await render(
       <Input

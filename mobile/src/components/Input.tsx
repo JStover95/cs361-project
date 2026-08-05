@@ -6,6 +6,7 @@ type InputProps = {
   onChangeText: (text: string) => void;
   placeholder?: string;
   secureTextEntry?: boolean;
+  autoCapitalize?: "none" | "sentences" | "words" | "characters";
 };
 
 export function Input({
@@ -14,6 +15,7 @@ export function Input({
   onChangeText,
   placeholder,
   secureTextEntry = false,
+  autoCapitalize,
 }: InputProps) {
   return (
     <View style={styles.container}>
@@ -24,6 +26,7 @@ export function Input({
         onChangeText={onChangeText}
         placeholder={placeholder}
         secureTextEntry={secureTextEntry}
+        autoCapitalize={autoCapitalize}
         accessibilityLabel={label}
       />
     </View>

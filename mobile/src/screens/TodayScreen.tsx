@@ -9,11 +9,13 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button } from "../components/Button";
+import { LogoutConfirmation } from "../components/LogoutConfirmation";
 import { TaskBottomSheet } from "../components/TaskBottomSheet";
 import { Title } from "../components/Title";
 import { Tooltip } from "../components/Tooltip";
 import { UndoToast } from "../components/UndoToast";
 import { WelcomeModal } from "../components/WelcomeModal";
+import { useAuthContext } from "../context/AuthContext";
 import { useTasks } from "../context/TasksContext";
 
 const HOURS = [
@@ -32,7 +34,12 @@ const HOURS = [
   "9:00pm",
 ];
 
-export function TodayScreen() {
+type TodayScreenProps = {
+  onLogout?: () => void;
+};
+
+export function TodayScreen({ onLogout }: TodayScreenProps) {
+  const { logout } = useAuthContext();
   const {
     lastDeletedTaskId,
     undoDelete,
@@ -41,16 +48,31 @@ export function TodayScreen() {
   } = useTasks();
   const [showIntro, setShowIntro] = useState(true);
   const [showTooltip, setShowTooltip] = useState(false);
+  const [showLogoutConfirmation, setShowLogoutConfirmation] = useState(false);
 
   const handleIntroFinish = () => {
     setShowIntro(false);
     setShowTooltip(true);
   };
 
+  const handleLogoutPress = () => {
+    setShowLogoutConfirmation(true);
+  };
+
+  const handleCancelLogout = () => {
+    setShowLogoutConfirmation(false);
+  };
+
+  const handleConfirmLogout = () => {
+    logout();
+    setShowLogoutConfirmation(false);
+    onLogout?.();
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <View style={styles.header}>
-        <View style={styles.headerSpacer} />
+        <Button label="Logout" onPress={handleLogoutPress} />
         <Title text="Channtto" />
         <Switch
           accessibilityLabel="Simulate network failure"
@@ -99,6 +121,13 @@ export function TodayScreen() {
       <UndoToast taskId={lastDeletedTaskId} onUndo={undoDelete} />
 
       {showIntro && <WelcomeModal onFinish={handleIntroFinish} />}
+
+      {showLogoutConfirmation && (
+        <LogoutConfirmation
+          onConfirm={handleConfirmLogout}
+          onCancel={handleCancelLogout}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -115,9 +144,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-  },
-  headerSpacer: {
-    width: 51,
   },
   body: {
     flex: 1,

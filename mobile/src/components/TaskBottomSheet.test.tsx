@@ -1,4 +1,5 @@
 import { fireEvent, render } from "@testing-library/react-native";
+import { AuthProvider } from "../context/AuthContext";
 import {
   NETWORK_ERROR_MESSAGE,
   TasksProvider,
@@ -67,20 +68,24 @@ function renderSheet(
 
   if (failureBeforeMount) {
     return render(
-      <TasksProvider>
-        <SeedFailureThenSheet>
-          <TaskBottomSheet />
-        </SeedFailureThenSheet>
-      </TasksProvider>
+      <AuthProvider>
+        <TasksProvider>
+          <SeedFailureThenSheet>
+            <TaskBottomSheet />
+          </SeedFailureThenSheet>
+        </TasksProvider>
+      </AuthProvider>
     );
   }
 
   return render(
-    <TasksProvider>
-      <SeedTasks tasks={seed} />
-      {withFailureToggle && <FailureToggle />}
-      <TaskBottomSheet />
-    </TasksProvider>
+    <AuthProvider>
+      <TasksProvider>
+        <SeedTasks tasks={seed} />
+        {withFailureToggle && <FailureToggle />}
+        <TaskBottomSheet />
+      </TasksProvider>
+    </AuthProvider>
   );
 }
 

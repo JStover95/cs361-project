@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { fireEvent, render } from "@testing-library/react-native";
+import { fireEvent, render, waitFor } from "@testing-library/react-native";
 import { Pressable, Text, View } from "react-native";
+import { AuthProvider, useAuthContext } from "./AuthContext";
 import {
   NETWORK_ERROR_MESSAGE,
   TasksProvider,
@@ -196,23 +197,92 @@ function FailureProbe() {
   );
 }
 
+function ScopedProbe() {
+  const { userId, login } = useAuthContext();
+  const { tasks, addTask } = useTasks();
+  const [lastAddedUserId, setLastAddedUserId] = useState<string | null>(null);
+
+  return (
+    <View>
+      <Text testID="auth-user-id">{userId ?? "null"}</Text>
+      <Text testID="task-count">{tasks.length}</Text>
+      <Text testID="last-added-user-id">{lastAddedUserId ?? "null"}</Text>
+      {tasks.map((task) => (
+        <Text key={task.id} testID={`task-${task.id}`}>
+          {task.title}|{task.userId}
+        </Text>
+      ))}
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => login("a@example.com", "secret")}
+      >
+        <Text>Login A</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => login("b@example.com", "secret")}
+      >
+        <Text>Login B</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => {
+          const task = addTask({
+            title: "Task A",
+            timeRequired: "30m",
+            importance: "High",
+            urgency: "High",
+          });
+          setLastAddedUserId(task.userId);
+        }}
+      >
+        <Text>Add Task A</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => {
+          const task = addTask({
+            title: "Task B",
+            timeRequired: "1h",
+            importance: "Low",
+            urgency: "Low",
+          });
+          setLastAddedUserId(task.userId);
+        }}
+      >
+        <Text>Add Task B</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function renderWithProviders(ui: React.ReactElement) {
+  return render(
+    <AuthProvider>
+      <TasksProvider>{ui}</TasksProvider>
+    </AuthProvider>
+  );
+}
+
+function jsonResponse(status: number, body: object) {
+  return Promise.resolve({
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(body),
+  } as Response);
+}
+
 describe("TasksContext", () => {
   it("starts with an empty task list", async () => {
-    const { getByTestId } = await render(
-      <TasksProvider>
-        <TasksProbe />
-      </TasksProvider>
-    );
+    const { getByTestId } = await renderWithProviders(<TasksProbe />);
 
     expect(getByTestId("task-count").props.children).toBe(0);
     expect(getByTestId("last-deleted").props.children).toBe("none");
   });
 
   it("adds tasks and returns them sorted alphabetically by title", async () => {
-    const { getByText, getByTestId, getAllByTestId } = await render(
-      <TasksProvider>
-        <TasksProbe />
-      </TasksProvider>
+    const { getByText, getByTestId, getAllByTestId } = await renderWithProviders(
+      <TasksProbe />
     );
 
     await fireEvent.press(getByText("Add Zebra"));
@@ -227,10 +297,8 @@ describe("TasksContext", () => {
   });
 
   it("updates and deletes tasks", async () => {
-    const { getByText, getByTestId, queryByText } = await render(
-      <TasksProvider>
-        <TasksProbe />
-      </TasksProvider>
+    const { getByText, getByTestId, queryByText } = await renderWithProviders(
+      <TasksProbe />
     );
 
     await fireEvent.press(getByText("Add Apple"));
@@ -245,10 +313,8 @@ describe("TasksContext", () => {
   });
 
   it("tracks lastDeletedTaskId after delete and restores on undo", async () => {
-    const { getByText, getByTestId, queryByText } = await render(
-      <TasksProvider>
-        <TasksProbe />
-      </TasksProvider>
+    const { getByText, getByTestId, queryByText } = await renderWithProviders(
+      <TasksProbe />
     );
 
     await fireEvent.press(getByText("Add Apple"));
@@ -272,10 +338,8 @@ describe("TasksContext", () => {
   });
 
   it("replaces lastDeletedTaskId when a second task is deleted", async () => {
-    const { getByText, getByTestId, queryByText } = await render(
-      <TasksProvider>
-        <TasksProbe />
-      </TasksProvider>
+    const { getByText, getByTestId, queryByText } = await renderWithProviders(
+      <TasksProbe />
     );
 
     await fireEvent.press(getByText("Add Apple"));
@@ -301,10 +365,8 @@ describe("TasksContext", () => {
   });
 
   it("throws on add, update, delete, and list when simulateFailure is enabled", async () => {
-    const { getByText, getByTestId } = await render(
-      <TasksProvider>
-        <FailureProbe />
-      </TasksProvider>
+    const { getByText, getByTestId } = await renderWithProviders(
+      <FailureProbe />
     );
 
     await fireEvent.press(getByText("Add Apple"));
@@ -346,5 +408,88 @@ describe("TasksContext", () => {
     await fireEvent.press(getByText("Update First"));
     expect(getByTestId("action-error").props.children).toBe("none");
     expect(getByText(/Updated\|2h\|High\|High/)).toBeTruthy();
+  });
+});
+
+describe("TasksContext per-user scoping", () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    global.fetch = jest.fn();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    jest.restoreAllMocks();
+  });
+
+  it("stamps addTask with the logged-in user's id", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue(
+      await jsonResponse(200, {
+        message: "Login successful.",
+        user_id: "user-a",
+      })
+    );
+
+    const { getByText, getByTestId } = await renderWithProviders(
+      <ScopedProbe />
+    );
+
+    await fireEvent.press(getByText("Login A"));
+    await waitFor(() => {
+      expect(getByTestId("auth-user-id").props.children).toBe("user-a");
+    });
+
+    await fireEvent.press(getByText("Add Task A"));
+
+    expect(getByTestId("last-added-user-id").props.children).toBe("user-a");
+    expect(getByText(/Task A\|user-a/)).toBeTruthy();
+  });
+
+  it("filters tasks to only those belonging to the logged-in user", async () => {
+    (global.fetch as jest.Mock).mockImplementation((_url: string, options) => {
+      const body = JSON.parse(options.body as string);
+      if (body.email === "a@example.com") {
+        return jsonResponse(200, {
+          message: "Login successful.",
+          user_id: "user-a",
+        });
+      }
+      return jsonResponse(200, {
+        message: "Login successful.",
+        user_id: "user-b",
+      });
+    });
+
+    const { getByText, getByTestId, queryByText } = await renderWithProviders(
+      <ScopedProbe />
+    );
+
+    await fireEvent.press(getByText("Login A"));
+    await waitFor(() => {
+      expect(getByTestId("auth-user-id").props.children).toBe("user-a");
+    });
+    await fireEvent.press(getByText("Add Task A"));
+    expect(getByText(/Task A\|user-a/)).toBeTruthy();
+
+    await fireEvent.press(getByText("Login B"));
+    await waitFor(() => {
+      expect(getByTestId("auth-user-id").props.children).toBe("user-b");
+    });
+    expect(queryByText(/Task A\|user-a/)).toBeNull();
+    expect(getByTestId("task-count").props.children).toBe(0);
+
+    await fireEvent.press(getByText("Add Task B"));
+    expect(getByText(/Task B\|user-b/)).toBeTruthy();
+    expect(queryByText(/Task A\|user-a/)).toBeNull();
+    expect(getByTestId("task-count").props.children).toBe(1);
+
+    await fireEvent.press(getByText("Login A"));
+    await waitFor(() => {
+      expect(getByTestId("auth-user-id").props.children).toBe("user-a");
+    });
+    expect(getByText(/Task A\|user-a/)).toBeTruthy();
+    expect(queryByText(/Task B\|user-b/)).toBeNull();
+    expect(getByTestId("task-count").props.children).toBe(1);
   });
 });

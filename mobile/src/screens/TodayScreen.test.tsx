@@ -1,6 +1,7 @@
-import { fireEvent, render } from "@testing-library/react-native";
+import { fireEvent, render, waitFor } from "@testing-library/react-native";
 import { useEffect } from "react";
-import { View } from "react-native";
+import { Pressable, Text, View } from "react-native";
+import { AuthProvider, useAuthContext } from "../context/AuthContext";
 import { TasksProvider, useTasks } from "../context/TasksContext";
 import { TodayScreen } from "./TodayScreen";
 
@@ -23,19 +24,47 @@ function SeedTasks({
   return <View />;
 }
 
+function LoginProbe() {
+  const { userId, login } = useAuthContext();
+
+  return (
+    <View>
+      <Text testID="auth-user-id">{userId ?? "null"}</Text>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => login("user@example.com", "secret")}
+      >
+        <Text>Login Probe</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function jsonResponse(status: number, body: object) {
+  return Promise.resolve({
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(body),
+  } as Response);
+}
+
 function renderToday(
   seed: Array<{
     title: string;
     timeRequired: string;
     importance: "High" | "Low";
     urgency: "High" | "Low";
-  }> = []
+  }> = [],
+  onLogout?: () => void
 ) {
   return render(
-    <TasksProvider>
-      <SeedTasks tasks={seed} />
-      <TodayScreen />
-    </TasksProvider>
+    <AuthProvider>
+      <TasksProvider>
+        <LoginProbe />
+        <SeedTasks tasks={seed} />
+        <TodayScreen onLogout={onLogout} />
+      </TasksProvider>
+    </AuthProvider>
   );
 }
 
@@ -50,6 +79,17 @@ async function completeIntro(
 }
 
 describe("TodayScreen", () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    global.fetch = jest.fn();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    jest.restoreAllMocks();
+  });
+
   it("renders schedule chrome and welcome intro on mount", async () => {
     const { getByText, queryByText } = await renderToday();
 
@@ -57,6 +97,7 @@ describe("TodayScreen", () => {
     expect(getByText("Today")).toBeTruthy();
     expect(getByText("View Matrix")).toBeTruthy();
     expect(getByText("Block Time")).toBeTruthy();
+    expect(getByText("Logout")).toBeTruthy();
     expect(getByText("Welcome!")).toBeTruthy();
     expect(
       getByText(
@@ -144,5 +185,51 @@ describe("TodayScreen", () => {
     expect(
       getByText("Are you sure you want to delete this task?")
     ).toBeTruthy();
+  });
+
+  it("pressing Logout shows the confirmation modal", async () => {
+    const { getByText } = await renderToday();
+
+    await fireEvent.press(getByText("Logout"));
+
+    expect(getByText("Log out?")).toBeTruthy();
+    expect(getByText("Are you sure you want to log out?")).toBeTruthy();
+  });
+
+  it("pressing Cancel dismisses the confirmation without logging out", async () => {
+    const onLogout = jest.fn();
+    const { getByText, queryByText } = await renderToday([], onLogout);
+
+    await fireEvent.press(getByText("Logout"));
+    await fireEvent.press(getByText("Cancel"));
+
+    expect(queryByText("Log out?")).toBeNull();
+    expect(onLogout).not.toHaveBeenCalled();
+  });
+
+  it("confirming logout clears the userId and navigates back", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue(
+      await jsonResponse(200, {
+        message: "Login successful.",
+        user_id: "u-3",
+      })
+    );
+    const onLogout = jest.fn();
+    const { getByText, getByTestId, queryByText } = await renderToday(
+      [],
+      onLogout
+    );
+
+    await fireEvent.press(getByText("Login Probe"));
+    await waitFor(() => {
+      expect(getByTestId("auth-user-id").props.children).toBe("u-3");
+    });
+
+    await fireEvent.press(getByText("Logout"));
+    await fireEvent.press(getByText("Log out"));
+
+    expect(onLogout).toHaveBeenCalledTimes(1);
+    expect(queryByText("Log out?")).toBeNull();
+    expect(getByTestId("auth-user-id").props.children).toBe("null");
   });
 });

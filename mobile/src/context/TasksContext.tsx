@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { Importance, Task, Urgency } from "../types/task";
+import { useAuthContext } from "./AuthContext";
 
 export const NETWORK_ERROR_MESSAGE =
   "Network request failed. Please try again.";
@@ -42,6 +43,7 @@ function createId(): string {
 }
 
 export function TasksProvider({ children }: { children: ReactNode }) {
+  const { userId } = useAuthContext();
   const [taskMap, setTaskMap] = useState<Map<string, Task>>(() => new Map());
   const [lastDeletedTaskId, setLastDeletedTaskId] = useState<string | null>(
     null
@@ -51,6 +53,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
   taskMapRef.current = taskMap;
   const simulateFailureRef = useRef(simulateFailure);
   simulateFailureRef.current = simulateFailure;
+  const currentUserId = userId ?? "";
 
   const throwIfSimulatingFailure = useCallback(() => {
     if (simulateFailureRef.current) {
@@ -61,9 +64,9 @@ export function TasksProvider({ children }: { children: ReactNode }) {
   const tasks = useMemo(
     () =>
       Array.from(taskMap.values())
-        .filter((task) => !task.deleted)
+        .filter((task) => !task.deleted && task.userId === currentUserId)
         .sort((a, b) => a.title.localeCompare(b.title)),
-    [taskMap]
+    [taskMap, currentUserId]
   );
 
   const tasksRef = useRef(tasks);
@@ -79,6 +82,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       throwIfSimulatingFailure();
       const task: Task = {
         id: createId(),
+        userId: currentUserId,
         ...input,
       };
       setTaskMap((prev) => {
@@ -88,7 +92,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       });
       return task;
     },
-    [throwIfSimulatingFailure]
+    [throwIfSimulatingFailure, currentUserId]
   );
 
   const updateTask = useCallback(

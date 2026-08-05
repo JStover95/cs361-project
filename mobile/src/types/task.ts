@@ -3,6 +3,7 @@ export type Urgency = "High" | "Low";
 
 export type Task = {
   id: string;
+  userId: string;
   title: string;
   timeRequired: string;
   importance: Importance;

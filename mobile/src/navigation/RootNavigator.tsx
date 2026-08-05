@@ -29,7 +29,18 @@ export function RootNavigator() {
             />
           )}
         </Stack.Screen>
-        <Stack.Screen name="Today" component={TodayScreen} />
+        <Stack.Screen name="Today">
+          {({ navigation }) => (
+            <TodayScreen
+              onLogout={() =>
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: "Auth" }],
+                })
+              }
+            />
+          )}
+        </Stack.Screen>
       </Stack.Navigator>
     </NavigationContainer>
   );
