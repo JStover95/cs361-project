@@ -5,9 +5,44 @@ import {
   TasksProvider,
   useTasks,
 } from "../context/TasksContext";
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useState } from "react";
+import { act } from "react";
 import { Pressable, Text, View } from "react-native";
+import { State } from "react-native-gesture-handler";
+import { Task, Importance, Urgency } from "../types/task";
 import { TaskBottomSheet } from "./TaskBottomSheet";
+
+jest.mock("react-native-gesture-handler", () => {
+  const React = require("react");
+  const { View } = require("react-native");
+  const actual = jest.requireActual("react-native-gesture-handler");
+
+  return {
+    ...actual,
+    PanGestureHandler: ({
+      children,
+      testID,
+      onGestureEvent,
+      onHandlerStateChange,
+    }: {
+      children: React.ReactNode;
+      testID?: string;
+      onGestureEvent?: (event: unknown) => void;
+      onHandlerStateChange?: (event: unknown) => void;
+    }) =>
+      React.createElement(
+        View,
+        {
+          testID,
+          onGestureEvent,
+          onHandlerStateChange,
+        },
+        children
+      ),
+  };
+});
+
+type QueriedElement = { props: Record<string, unknown> };
 
 function SeedTasks({
   tasks,
@@ -55,24 +90,47 @@ function SeedFailureThenSheet({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+type SheetOptions = {
+  withFailureToggle?: boolean;
+  failureBeforeMount?: boolean;
+  hidden?: boolean;
+  onDragStart?: (task: Task) => void;
+  onDragMove?: (absoluteY: number) => void;
+  onDragEnd?: () => void;
+};
+
 function renderSheet(
   seed: Array<{
     title: string;
     timeRequired: string;
-    importance: "High" | "Low";
-    urgency: "High" | "Low";
+    importance: Importance;
+    urgency: Urgency;
   }> = [],
-  options: { withFailureToggle?: boolean; failureBeforeMount?: boolean } = {}
+  options: SheetOptions = {}
 ) {
-  const { withFailureToggle = false, failureBeforeMount = false } = options;
+  const {
+    withFailureToggle = false,
+    failureBeforeMount = false,
+    hidden,
+    onDragStart,
+    onDragMove,
+    onDragEnd,
+  } = options;
+
+  const sheet = (
+    <TaskBottomSheet
+      hidden={hidden}
+      onDragStart={onDragStart}
+      onDragMove={onDragMove}
+      onDragEnd={onDragEnd}
+    />
+  );
 
   if (failureBeforeMount) {
     return render(
       <AuthProvider>
         <TasksProvider>
-          <SeedFailureThenSheet>
-            <TaskBottomSheet />
-          </SeedFailureThenSheet>
+          <SeedFailureThenSheet>{sheet}</SeedFailureThenSheet>
         </TasksProvider>
       </AuthProvider>
     );
@@ -83,7 +141,7 @@ function renderSheet(
       <TasksProvider>
         <SeedTasks tasks={seed} />
         {withFailureToggle && <FailureToggle />}
-        <TaskBottomSheet />
+        {sheet}
       </TasksProvider>
     </AuthProvider>
   );
@@ -364,5 +422,147 @@ describe("TaskBottomSheet", () => {
     expect(
       getByText("Are you sure you want to delete this task?")
     ).toBeTruthy();
+  });
+
+  it("invokes drag callbacks when a task card is dragged", async () => {
+    const onDragStart = jest.fn();
+    const onDragMove = jest.fn();
+    const onDragEnd = jest.fn();
+
+    const { getByText, getByTestId } = await renderSheet(
+      [
+        {
+          title: "Call mom",
+          timeRequired: "30m",
+          importance: "High",
+          urgency: "High",
+        },
+      ],
+      { onDragStart, onDragMove, onDragEnd }
+    );
+
+    expect(getByText("Call mom")).toBeTruthy();
+
+    const gesture = getByTestId(
+      /^task-drag-/
+    ) as unknown as QueriedElement;
+
+    act(() => {
+      (
+        gesture!.props.onHandlerStateChange as
+          | ((event: unknown) => void)
+          | undefined
+      )?.({
+        nativeEvent: { state: State.ACTIVE, oldState: State.BEGAN },
+      });
+    });
+
+    expect(onDragStart).toHaveBeenCalledTimes(1);
+    expect(onDragStart.mock.calls[0][0].title).toBe("Call mom");
+
+    act(() => {
+      (
+        gesture!.props.onGestureEvent as ((event: unknown) => void) | undefined
+      )?.({
+        nativeEvent: { absoluteY: 240 },
+      });
+    });
+
+    expect(onDragMove).toHaveBeenCalledWith(240);
+
+    act(() => {
+      (
+        gesture!.props.onHandlerStateChange as
+          | ((event: unknown) => void)
+          | undefined
+      )?.({
+        nativeEvent: { state: State.END, oldState: State.ACTIVE },
+      });
+    });
+
+    expect(onDragEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns null when hidden and not dragging", async () => {
+    const { queryByText, queryByTestId } = await renderSheet([], {
+      hidden: true,
+    });
+
+    expect(queryByText("Tasks")).toBeNull();
+    expect(queryByTestId("bottom-sheet")).toBeNull();
+  });
+
+  it("stays mounted while dragging even if hidden becomes true", async () => {
+    const onDragStart = jest.fn();
+    const onDragMove = jest.fn();
+    const onDragEnd = jest.fn();
+
+    function DragThenHideSheet() {
+      const [hidden, setHidden] = useState(false);
+      return (
+        <TaskBottomSheet
+          hidden={hidden}
+          onDragStart={(task) => {
+            onDragStart(task);
+            setHidden(true);
+          }}
+          onDragMove={onDragMove}
+          onDragEnd={onDragEnd}
+        />
+      );
+    }
+
+    const { getByText, getByTestId } = await render(
+      <AuthProvider>
+        <TasksProvider>
+          <SeedTasks
+            tasks={[
+              {
+                title: "Call mom",
+                timeRequired: "30m",
+                importance: "High",
+                urgency: "High",
+              },
+            ]}
+          />
+          <DragThenHideSheet />
+        </TasksProvider>
+      </AuthProvider>
+    );
+
+    expect(getByText("Call mom")).toBeTruthy();
+    const gesture = getByTestId(/^task-drag-/) as unknown as QueriedElement;
+
+    act(() => {
+      (
+        gesture.props.onHandlerStateChange as
+          | ((event: unknown) => void)
+          | undefined
+      )?.({
+        nativeEvent: { state: State.ACTIVE, oldState: State.BEGAN },
+      });
+    });
+
+    expect(onDragStart).toHaveBeenCalledTimes(1);
+    // Still mounted so the active gesture can continue
+    expect(getByTestId("bottom-sheet")).toBeTruthy();
+
+    act(() => {
+      (
+        gesture.props.onGestureEvent as ((event: unknown) => void) | undefined
+      )?.({
+        nativeEvent: { absoluteY: 240 },
+      });
+      (
+        gesture.props.onHandlerStateChange as
+          | ((event: unknown) => void)
+          | undefined
+      )?.({
+        nativeEvent: { state: State.END, oldState: State.ACTIVE },
+      });
+    });
+
+    expect(onDragMove).toHaveBeenCalledWith(240);
+    expect(onDragEnd).toHaveBeenCalledTimes(1);
   });
 });

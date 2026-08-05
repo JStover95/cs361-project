@@ -4,6 +4,7 @@ import { Pressable, Text, View } from "react-native";
 import { AuthProvider, useAuthContext } from "./AuthContext";
 import {
   NETWORK_ERROR_MESSAGE,
+  SCHEDULE_OVERLAP_MESSAGE,
   TasksProvider,
   useTasks,
 } from "./TasksContext";
@@ -16,15 +17,33 @@ function TasksProbe() {
     updateTask,
     deleteTask,
     undoDelete,
+    scheduleTask,
+    listTasks,
   } = useTasks();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [listedCount, setListedCount] = useState<number | null>(null);
+
+  const run = (action: () => void) => {
+    try {
+      action();
+      setActionError(null);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "error");
+    }
+  };
 
   return (
     <View>
       <Text testID="task-count">{tasks.length}</Text>
       <Text testID="last-deleted">{lastDeletedTaskId ?? "none"}</Text>
+      <Text testID="action-error">{actionError ?? "none"}</Text>
+      <Text testID="listed-count">
+        {listedCount === null ? "none" : listedCount}
+      </Text>
       {tasks.map((task) => (
         <Text key={task.id} testID={`task-${task.id}`}>
-          {task.title}|{task.timeRequired}|{task.importance}|{task.urgency}
+          {task.title}|{task.timeRequired}|{task.importance}|{task.urgency}|
+          {task.scheduledStartMinutes ?? "unscheduled"}
         </Text>
       ))}
       <Pressable
@@ -94,6 +113,55 @@ function TasksProbe() {
       <Pressable accessibilityRole="button" onPress={undoDelete}>
         <Text>Undo Delete</Text>
       </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() =>
+          run(() => {
+            const apple = tasks.find((t) => t.title === "Apple");
+            if (apple) {
+              scheduleTask(apple.id, 11 * 60 + 30);
+            }
+          })
+        }
+      >
+        <Text>Schedule Apple 11:30</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() =>
+          run(() => {
+            const zebra = tasks.find((t) => t.title === "Zebra");
+            if (zebra) {
+              scheduleTask(zebra.id, 11 * 60);
+            }
+          })
+        }
+      >
+        <Text>Schedule Zebra 11:00</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() =>
+          run(() => {
+            const zebra = tasks.find((t) => t.title === "Zebra");
+            if (zebra) {
+              scheduleTask(zebra.id, 14 * 60);
+            }
+          })
+        }
+      >
+        <Text>Schedule Zebra 14:00</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() =>
+          run(() => {
+            setListedCount(listTasks().length);
+          })
+        }
+      >
+        <Text>List Unscheduled</Text>
+      </Pressable>
     </View>
   );
 }
@@ -107,6 +175,7 @@ function FailureProbe() {
     addTask,
     updateTask,
     deleteTask,
+    scheduleTask,
   } = useTasks();
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -126,7 +195,8 @@ function FailureProbe() {
       <Text testID="action-error">{actionError ?? "none"}</Text>
       {tasks.map((task) => (
         <Text key={task.id} testID={`task-${task.id}`}>
-          {task.title}|{task.timeRequired}|{task.importance}|{task.urgency}
+          {task.title}|{task.timeRequired}|{task.importance}|{task.urgency}|
+          {task.scheduledStartMinutes ?? "unscheduled"}
         </Text>
       ))}
       <Pressable
@@ -192,6 +262,19 @@ function FailureProbe() {
         onPress={() => run(() => listTasks())}
       >
         <Text>List Tasks</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() =>
+          run(() => {
+            const first = tasks[0];
+            if (first) {
+              scheduleTask(first.id, 10 * 60);
+            }
+          })
+        }
+      >
+        <Text>Schedule First</Text>
       </Pressable>
     </View>
   );
@@ -364,7 +447,60 @@ describe("TasksContext", () => {
     expect(queryByText(/Apple\|30m\|Low\|High/)).toBeNull();
   });
 
-  it("throws on add, update, delete, and list when simulateFailure is enabled", async () => {
+  it("schedules a task at the given start minutes", async () => {
+    const { getByText, getByTestId } = await renderWithProviders(<TasksProbe />);
+
+    await fireEvent.press(getByText("Add Apple"));
+    await fireEvent.press(getByText("Schedule Apple 11:30"));
+
+    expect(getByTestId("action-error").props.children).toBe("none");
+    expect(getByText(/Apple\|30m\|Low\|High\|690/)).toBeTruthy();
+  });
+
+  it("throws on overlap and leaves the overlapping task unscheduled", async () => {
+    const { getByText, getByTestId } = await renderWithProviders(<TasksProbe />);
+
+    await fireEvent.press(getByText("Add Apple"));
+    await fireEvent.press(getByText("Add Zebra"));
+    await fireEvent.press(getByText("Schedule Apple 11:30"));
+    expect(getByText(/Apple\|30m\|Low\|High\|690/)).toBeTruthy();
+
+    await fireEvent.press(getByText("Schedule Zebra 11:00"));
+
+    expect(getByTestId("action-error").props.children).toBe(
+      SCHEDULE_OVERLAP_MESSAGE
+    );
+    expect(getByText(/Zebra\|1h\|High\|Low\|unscheduled/)).toBeTruthy();
+  });
+
+  it("schedules non-overlapping tasks successfully", async () => {
+    const { getByText, getByTestId } = await renderWithProviders(<TasksProbe />);
+
+    await fireEvent.press(getByText("Add Apple"));
+    await fireEvent.press(getByText("Add Zebra"));
+    await fireEvent.press(getByText("Schedule Apple 11:30"));
+    await fireEvent.press(getByText("Schedule Zebra 14:00"));
+
+    expect(getByTestId("action-error").props.children).toBe("none");
+    expect(getByText(/Apple\|30m\|Low\|High\|690/)).toBeTruthy();
+    expect(getByText(/Zebra\|1h\|High\|Low\|840/)).toBeTruthy();
+  });
+
+  it("excludes scheduled tasks from listTasks", async () => {
+    const { getByText, getByTestId } = await renderWithProviders(<TasksProbe />);
+
+    await fireEvent.press(getByText("Add Apple"));
+    await fireEvent.press(getByText("Add Zebra"));
+    await fireEvent.press(getByText("List Unscheduled"));
+    expect(getByTestId("listed-count").props.children).toBe(2);
+
+    await fireEvent.press(getByText("Schedule Apple 11:30"));
+    await fireEvent.press(getByText("List Unscheduled"));
+    expect(getByTestId("listed-count").props.children).toBe(1);
+    expect(getByTestId("task-count").props.children).toBe(2);
+  });
+
+  it("throws on add, update, delete, list, and schedule when simulateFailure is enabled", async () => {
     const { getByText, getByTestId } = await renderWithProviders(
       <FailureProbe />
     );
@@ -398,6 +534,12 @@ describe("TasksContext", () => {
     expect(getByTestId("action-error").props.children).toBe(
       NETWORK_ERROR_MESSAGE
     );
+
+    await fireEvent.press(getByText("Schedule First"));
+    expect(getByTestId("action-error").props.children).toBe(
+      NETWORK_ERROR_MESSAGE
+    );
+    expect(getByText(/Apple\|30m\|Low\|High\|unscheduled/)).toBeTruthy();
 
     await fireEvent.press(getByText("Disable Failure"));
     expect(getByTestId("simulate-failure").props.children).toBe("off");

@@ -9,6 +9,8 @@ export type Task = {
   importance: Importance;
   urgency: Urgency;
   deleted?: boolean;
+  /** Minutes since midnight; null/undefined = unscheduled */
+  scheduledStartMinutes?: number | null;
 };
 
 export type TaskInput = {

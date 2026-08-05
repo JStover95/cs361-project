@@ -6,6 +6,12 @@ import BottomSheet, {
   BottomSheetFooterProps,
   BottomSheetView,
 } from "@gorhom/bottom-sheet";
+import {
+  PanGestureHandler,
+  PanGestureHandlerGestureEvent,
+  PanGestureHandlerStateChangeEvent,
+  State,
+} from "react-native-gesture-handler";
 import { useTasks } from "../context/TasksContext";
 import { Importance, Task, Urgency } from "../types/task";
 import { Button } from "./Button";
@@ -17,7 +23,19 @@ import { TaskForm } from "./TaskForm";
 
 type SheetMode = "list" | "creating" | "updating" | "deleting";
 
-export function TaskBottomSheet() {
+type TaskBottomSheetProps = {
+  hidden?: boolean;
+  onDragStart?: (task: Task) => void;
+  onDragMove?: (absoluteY: number) => void;
+  onDragEnd?: () => void;
+};
+
+export function TaskBottomSheet({
+  hidden = false,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+}: TaskBottomSheetProps) {
   const { tasks, listTasks, addTask, updateTask, deleteTask } = useTasks();
   const sheetRef = useRef<BottomSheet>(null);
   const [mode, setMode] = useState<SheetMode>("list");
@@ -26,6 +44,9 @@ export function TaskBottomSheet() {
   const [listItems, setListItems] = useState<Task[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
+  // Keep the sheet mounted for the duration of an in-flight drag so the
+  // PanGestureHandler is not torn down when the parent sets hidden=true.
+  const [isDragging, setIsDragging] = useState(false);
 
   const snapPoints = useMemo(() => ["12%", "55%", "90%"], []);
 
@@ -145,18 +166,48 @@ export function TaskBottomSheet() {
   }, [retryAction]);
 
   const renderItem = useCallback(
-    ({ item }: { item: Task }) => (
-      <SwipeToDelete onDelete={() => handleSwipeDelete(item)}>
-        <TaskCard
-          title={item.title}
-          timeRequired={item.timeRequired}
-          importance={item.importance}
-          urgency={item.urgency}
-          onPress={() => handleSelectTask(item)}
-        />
-      </SwipeToDelete>
-    ),
-    [handleSelectTask, handleSwipeDelete]
+    ({ item }: { item: Task }) => {
+      const handleDragStateChange = (
+        event: PanGestureHandlerStateChangeEvent
+      ) => {
+        if (event.nativeEvent.state === State.ACTIVE) {
+          setIsDragging(true);
+          onDragStart?.(item);
+          return;
+        }
+        if (event.nativeEvent.oldState === State.ACTIVE) {
+          setIsDragging(false);
+          onDragEnd?.();
+        }
+      };
+
+      const handleDragGesture = (event: PanGestureHandlerGestureEvent) => {
+        onDragMove?.(event.nativeEvent.absoluteY);
+      };
+
+      return (
+        <PanGestureHandler
+          testID={`task-drag-${item.id}`}
+          onGestureEvent={handleDragGesture}
+          onHandlerStateChange={handleDragStateChange}
+          activeOffsetY={[-10, 10]}
+          failOffsetX={[-10, 10]}
+        >
+          <View>
+            <SwipeToDelete onDelete={() => handleSwipeDelete(item)}>
+              <TaskCard
+                title={item.title}
+                timeRequired={item.timeRequired}
+                importance={item.importance}
+                urgency={item.urgency}
+                onPress={() => handleSelectTask(item)}
+              />
+            </SwipeToDelete>
+          </View>
+        </PanGestureHandler>
+      );
+    },
+    [handleSelectTask, handleSwipeDelete, onDragStart, onDragMove, onDragEnd]
   );
 
   const renderListHeader = useCallback(
@@ -181,6 +232,12 @@ export function TaskBottomSheet() {
     [mode, handleAdd]
   );
 
+  // Unmount only when hidden AND no drag is in flight. Unmounting mid-drag
+  // destroys the PanGestureHandler and freezes moving mode.
+  if (hidden && !isDragging) {
+    return null;
+  }
+
   return (
     <>
       <BottomSheet
@@ -189,6 +246,7 @@ export function TaskBottomSheet() {
         index={0}
         enablePanDownToClose={false}
         enableDynamicSizing={false}
+        containerStyle={hidden ? styles.hiddenSheet : undefined}
         backgroundStyle={styles.sheetBackground}
         handleIndicatorStyle={styles.handleIndicator}
         footerComponent={renderFooter}
@@ -261,6 +319,9 @@ export function TaskBottomSheet() {
 }
 
 const styles = StyleSheet.create({
+  hiddenSheet: {
+    opacity: 0,
+  },
   sheetBackground: {
     backgroundColor: "#D9D9D9",
   },

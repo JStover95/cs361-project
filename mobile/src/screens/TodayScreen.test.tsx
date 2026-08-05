@@ -1,9 +1,46 @@
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
-import { useEffect } from "react";
+import { act, useEffect } from "react";
 import { Pressable, Text, View } from "react-native";
+import { State } from "react-native-gesture-handler";
 import { AuthProvider, useAuthContext } from "../context/AuthContext";
-import { TasksProvider, useTasks } from "../context/TasksContext";
+import {
+  SCHEDULE_OVERLAP_MESSAGE,
+  TasksProvider,
+  useTasks,
+} from "../context/TasksContext";
 import { TodayScreen } from "./TodayScreen";
+
+jest.mock("react-native-gesture-handler", () => {
+  const React = require("react");
+  const { View } = require("react-native");
+  const actual = jest.requireActual("react-native-gesture-handler");
+
+  return {
+    ...actual,
+    PanGestureHandler: ({
+      children,
+      testID,
+      onGestureEvent,
+      onHandlerStateChange,
+    }: {
+      children: React.ReactNode;
+      testID?: string;
+      onGestureEvent?: (event: unknown) => void;
+      onHandlerStateChange?: (event: unknown) => void;
+    }) =>
+      React.createElement(
+        View,
+        {
+          testID,
+          onGestureEvent,
+          onHandlerStateChange,
+        },
+        children
+      ),
+  };
+});
+
+type QueriedElement = { props: Record<string, unknown> };
 
 function SeedTasks({
   tasks,
@@ -76,6 +113,60 @@ async function completeIntro(
   await fireEvent.press(getByText("Next"));
   await fireEvent.press(getByText("Next"));
   await fireEvent.press(getByText("Done"));
+}
+
+function getDragGesture(
+  getAllByTestId: (id: string | RegExp) => QueriedElement[],
+  index = 0
+): QueriedElement {
+  const gestures = getAllByTestId(/^task-drag-/) as unknown as QueriedElement[];
+  return gestures[index];
+}
+
+function startDrag(gesture: QueriedElement) {
+  act(() => {
+    (
+      gesture.props.onHandlerStateChange as
+        | ((event: unknown) => void)
+        | undefined
+    )?.({
+      nativeEvent: { state: State.ACTIVE, oldState: State.BEGAN },
+    });
+  });
+}
+
+function moveDrag(gesture: QueriedElement, absoluteY: number) {
+  act(() => {
+    (gesture.props.onGestureEvent as ((event: unknown) => void) | undefined)?.({
+      nativeEvent: { absoluteY },
+    });
+  });
+}
+
+function endDrag(gesture: QueriedElement) {
+  act(() => {
+    (
+      gesture.props.onHandlerStateChange as
+        | ((event: unknown) => void)
+        | undefined
+    )?.({
+      nativeEvent: { state: State.END, oldState: State.ACTIVE },
+    });
+  });
+}
+
+function getStyleProp(
+  element: QueriedElement,
+  key: string
+): number | undefined {
+  const style = element.props.style;
+  const styles = Array.isArray(style) ? style : [style];
+  for (const entry of styles) {
+    if (entry && typeof entry === "object" && key in entry) {
+      return (entry as Record<string, number>)[key];
+    }
+  }
+  return undefined;
 }
 
 describe("TodayScreen", () => {
@@ -231,5 +322,164 @@ describe("TodayScreen", () => {
     expect(onLogout).toHaveBeenCalledTimes(1);
     expect(queryByText("Log out?")).toBeNull();
     expect(getByTestId("auth-user-id").props.children).toBe("null");
+  });
+
+  it("enters moving mode when a bottom-sheet task is dragged", async () => {
+    const { getByText, getByTestId, getAllByTestId, queryByText, queryByTestId } =
+      await renderToday([
+        {
+          title: "Go to the gym",
+          timeRequired: "1h",
+          importance: "High",
+          urgency: "Low",
+        },
+      ]);
+
+    await completeIntro(getByText);
+    await fireEvent.press(getByText("Block Time"));
+
+    const gesture = getDragGesture(getAllByTestId as never);
+    startDrag(gesture);
+
+    expect(queryByText("Today")).toBeNull();
+    expect(queryByText("View Matrix")).toBeNull();
+    expect(queryByText("Block Time")).toBeNull();
+    // Sheet stays mounted (opacity 0) while the drag gesture is active
+    expect(getByTestId("bottom-sheet")).toBeTruthy();
+    expect(getByTestId("stop-moving-button")).toBeTruthy();
+    expect(getByTestId("drag-ghost")).toBeTruthy();
+  });
+
+  it("highlights the 30-minute slot under the dragged task top edge", async () => {
+    const { getByText, getByTestId, getAllByTestId } = await renderToday([
+      {
+        title: "Go to the gym",
+        timeRequired: "1h",
+        importance: "High",
+        urgency: "Low",
+      },
+    ]);
+
+    await completeIntro(getByText);
+    await fireEvent.press(getByText("Block Time"));
+
+    const gesture = getDragGesture(getAllByTestId as never);
+    startDrag(gesture);
+    // absoluteY 120 with scheduleTop=0 -> slotIndex 5 -> 11:30am (690)
+    // offset = ((690 - 540) / 60) * 48 = 120
+    moveDrag(gesture, 120);
+
+    const highlight = getByTestId("drop-highlight");
+    expect(getStyleProp(highlight as never, "top")).toBe(120);
+    expect(getStyleProp(highlight as never, "height")).toBe(24);
+  });
+
+  it("schedules the task on drop and returns to normal mode", async () => {
+    const { getByText, getByTestId, getAllByTestId, queryByTestId } =
+      await renderToday([
+        {
+          title: "Go to the gym",
+          timeRequired: "1h",
+          importance: "High",
+          urgency: "Low",
+        },
+      ]);
+
+    await completeIntro(getByText);
+    await fireEvent.press(getByText("Block Time"));
+
+    const gesture = getDragGesture(getAllByTestId as never);
+    startDrag(gesture);
+    moveDrag(gesture, 120);
+    endDrag(gesture);
+
+    expect(getByText("Today")).toBeTruthy();
+    expect(getByText("View Matrix")).toBeTruthy();
+    expect(getByText("Block Time")).toBeTruthy();
+    expect(queryByTestId("stop-moving-button")).toBeNull();
+    expect(getByTestId("bottom-sheet")).toBeTruthy();
+    expect(queryByTestId(/^task-drag-/)).toBeNull();
+
+    const scheduled = getByTestId(/^scheduled-task-/);
+    expect(getByText("Go to the gym")).toBeTruthy();
+    // 1h at 11:30 -> top 120, height 48
+    expect(getStyleProp(scheduled as never, "top")).toBe(120);
+    expect(getStyleProp(scheduled as never, "height")).toBe(48);
+  });
+
+  it("does nothing when the stop-moving X button is pressed", async () => {
+    const { getByText, getByTestId, getAllByTestId, queryByText, queryByTestId } =
+      await renderToday([
+        {
+          title: "Go to the gym",
+          timeRequired: "1h",
+          importance: "High",
+          urgency: "Low",
+        },
+      ]);
+
+    await completeIntro(getByText);
+    await fireEvent.press(getByText("Block Time"));
+
+    const gesture = getDragGesture(getAllByTestId as never);
+    startDrag(gesture);
+
+    await fireEvent.press(getByTestId("stop-moving-button"));
+
+    expect(queryByText("Today")).toBeNull();
+    expect(getByTestId("stop-moving-button")).toBeTruthy();
+    expect(queryByTestId(/^scheduled-task-/)).toBeNull();
+    // Still mid-drag: sheet remains mounted so the gesture can continue
+    expect(getByTestId("bottom-sheet")).toBeTruthy();
+  });
+
+  it("shows a non-retryable error when a dropped task overlaps another", async () => {
+    const { getByText, getByTestId, getAllByTestId, queryByText, queryByTestId } =
+      await renderToday([
+        {
+          title: "Go to the gym",
+          timeRequired: "1h",
+          importance: "High",
+          urgency: "Low",
+        },
+        {
+          title: "Read a book",
+          timeRequired: "1h",
+          importance: "High",
+          urgency: "Low",
+        },
+      ]);
+
+    await completeIntro(getByText);
+    await fireEvent.press(getByText("Block Time"));
+
+    // Alphabetical: "Go to the gym" is index 0
+    const firstGesture = getDragGesture(getAllByTestId as never, 0);
+    startDrag(firstGesture);
+    moveDrag(firstGesture, 120);
+    endDrag(firstGesture);
+
+    expect(getByTestId(/^scheduled-task-/)).toBeTruthy();
+
+    // Only "Read a book" remains in the sheet
+    const secondGesture = getDragGesture(getAllByTestId as never, 0);
+    startDrag(secondGesture);
+    moveDrag(secondGesture, 96);
+    endDrag(secondGesture);
+
+    expect(getByText("An error occured!")).toBeTruthy();
+    expect(getByText(SCHEDULE_OVERLAP_MESSAGE)).toBeTruthy();
+    expect(queryByText("Try Again")).toBeNull();
+
+    // Already back in normal mode after the failed drop
+    expect(getByText("Today")).toBeTruthy();
+    expect(queryByTestId("stop-moving-button")).toBeNull();
+    expect(getByText("Read a book")).toBeTruthy();
+    expect(getByTestId(/^task-drag-/)).toBeTruthy();
+
+    await fireEvent.press(getByText("Go back"));
+    expect(queryByText("An error occured!")).toBeNull();
+    expect(getByText("Today")).toBeTruthy();
+    expect(getByText("Read a book")).toBeTruthy();
   });
 });

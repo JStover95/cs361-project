@@ -8,10 +8,14 @@ import {
   useState,
 } from "react";
 import { Importance, Task, Urgency } from "../types/task";
+import { getDurationMinutes } from "../utils/time";
 import { useAuthContext } from "./AuthContext";
 
 export const NETWORK_ERROR_MESSAGE =
   "Network request failed. Please try again.";
+
+export const SCHEDULE_OVERLAP_MESSAGE =
+  "This task overlaps with another scheduled task.";
 
 type TaskFields = {
   title: string;
@@ -30,6 +34,7 @@ type TasksContextValue = {
   updateTask: (id: string, input: TaskFields) => void;
   deleteTask: (id: string) => void;
   undoDelete: () => void;
+  scheduleTask: (id: string, startMinutes: number) => void;
 };
 
 const TasksContext = createContext<TasksContextValue | null>(null);
@@ -74,7 +79,9 @@ export function TasksProvider({ children }: { children: ReactNode }) {
 
   const listTasks = useCallback(() => {
     throwIfSimulatingFailure();
-    return tasksRef.current;
+    return tasksRef.current.filter(
+      (task) => task.scheduledStartMinutes == null
+    );
   }, [throwIfSimulatingFailure]);
 
   const addTask = useCallback(
@@ -150,6 +157,47 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const scheduleTask = useCallback(
+    (id: string, startMinutes: number) => {
+      throwIfSimulatingFailure();
+      const existing = taskMapRef.current.get(id);
+      if (!existing || existing.deleted) {
+        return;
+      }
+
+      const duration = getDurationMinutes(existing.timeRequired);
+      const endMinutes = startMinutes + duration;
+
+      const overlaps = Array.from(taskMapRef.current.values()).some((other) => {
+        if (other.id === id || other.deleted || other.userId !== currentUserId) {
+          return false;
+        }
+        if (other.scheduledStartMinutes == null) {
+          return false;
+        }
+        const otherStart = other.scheduledStartMinutes;
+        const otherEnd =
+          otherStart + getDurationMinutes(other.timeRequired);
+        return startMinutes < otherEnd && otherStart < endMinutes;
+      });
+
+      if (overlaps) {
+        throw new Error(SCHEDULE_OVERLAP_MESSAGE);
+      }
+
+      setTaskMap((prev) => {
+        const current = prev.get(id);
+        if (!current || current.deleted) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.set(id, { ...current, scheduledStartMinutes: startMinutes });
+        return next;
+      });
+    },
+    [throwIfSimulatingFailure, currentUserId]
+  );
+
   const value = useMemo(
     () => ({
       tasks,
@@ -161,6 +209,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       updateTask,
       deleteTask,
       undoDelete,
+      scheduleTask,
     }),
     [
       tasks,
@@ -171,6 +220,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       updateTask,
       deleteTask,
       undoDelete,
+      scheduleTask,
     ]
   );
 
