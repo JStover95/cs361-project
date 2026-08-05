@@ -24,10 +24,11 @@ import { Tooltip } from "../components/Tooltip";
 import { UndoToast } from "../components/UndoToast";
 import { WelcomeModal } from "../components/WelcomeModal";
 import { useAuthContext } from "../context/AuthContext";
-import { useTasks } from "../context/TasksContext";
+import { NETWORK_ERROR_MESSAGE, useTasks } from "../context/TasksContext";
 import { Task } from "../types/task";
 import { getEisenhowerColor } from "../utils/eisenhower";
 import { getDurationMinutes } from "../utils/time";
+import { requestScheduledEndTime } from "../utils/timedeltaService";
 
 const HOURS = [
   "9:00am",
@@ -231,7 +232,14 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
       setScheduleError(
         e instanceof Error ? e.message : "Something went wrong."
       );
+      return;
     }
+
+    const duration = getDurationMinutes(task.timeRequired);
+    requestScheduledEndTime(start, duration).catch(() => {
+      unscheduleTask(task.id);
+      setScheduleError(NETWORK_ERROR_MESSAGE);
+    });
   }, [scheduleTask, unscheduleTask]);
 
   const handleScheduledDragStateChange = useCallback(

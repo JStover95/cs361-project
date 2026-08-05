@@ -4,10 +4,12 @@ import { Pressable, Text, View } from "react-native";
 import { State } from "react-native-gesture-handler";
 import { AuthProvider, useAuthContext } from "../context/AuthContext";
 import {
+  NETWORK_ERROR_MESSAGE,
   SCHEDULE_OVERLAP_MESSAGE,
   TasksProvider,
   useTasks,
 } from "../context/TasksContext";
+import { TIMEDELTA_SERVICE_ENDPOINT } from "../utils/constants";
 import { TodayScreen } from "./TodayScreen";
 
 jest.mock("react-native-gesture-handler", () => {
@@ -193,7 +195,14 @@ describe("TodayScreen", () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
-    global.fetch = jest.fn();
+    global.fetch = jest.fn((url: string) => {
+      if (typeof url === "string" && url.includes("/timedelta")) {
+        return jsonResponse(200, {
+          ResultingTimestamp: "2000-01-01T12:30:00.000Z",
+        });
+      }
+      return jsonResponse(500, { error: "Unexpected fetch in test" });
+    });
   });
 
   afterEach(() => {
@@ -661,5 +670,154 @@ describe("TodayScreen", () => {
     expect(getByText("Go to the gym")).toBeTruthy();
     expect(getByTestId(/^task-drag-/)).toBeTruthy();
     expect(queryByText("An error occured!")).toBeNull();
+  });
+
+  it("calls the Timedelta Service when dropping an unscheduled task", async () => {
+    const { getByText, getAllByTestId } = await renderToday([
+      {
+        title: "Go to the gym",
+        timeRequired: "1h",
+        importance: "High",
+        urgency: "Low",
+      },
+    ]);
+
+    await completeIntro(getByText);
+    await fireEvent.press(getByText("Block Time"));
+
+    const gesture = getDragGesture(getAllByTestId as never);
+    startDrag(gesture);
+    // absoluteY 120 -> slotIndex 5 -> 11:30am (690 minutes)
+    moveDrag(gesture, 120);
+    endDrag(gesture);
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    const timedeltaCalls = (global.fetch as jest.Mock).mock.calls.filter(
+      ([url]: [string]) =>
+        typeof url === "string" && url.includes("/timedelta")
+    );
+    expect(timedeltaCalls).toHaveLength(1);
+    const url = timedeltaCalls[0][0] as string;
+    expect(url.startsWith(`${TIMEDELTA_SERVICE_ENDPOINT}/timedelta?`)).toBe(
+      true
+    );
+    expect(url).toContain("operation=add");
+    expect(url).toContain("value=60");
+    expect(url).toContain("unit=minutes");
+    expect(url).toContain(
+      `timestamp=${encodeURIComponent("2000-01-01T11:30:00.000Z")}`
+    );
+  });
+
+  it("calls the Timedelta Service again when moving a scheduled task", async () => {
+    const { getByText, getAllByTestId } = await renderToday([
+      {
+        title: "Go to the gym",
+        timeRequired: "1h",
+        importance: "High",
+        urgency: "Low",
+      },
+    ]);
+
+    await scheduleTaskViaDrag(getByText, getAllByTestId as never, 120);
+
+    await waitFor(() => {
+      expect(
+        (global.fetch as jest.Mock).mock.calls.filter(([url]: [string]) =>
+          typeof url === "string" && url.includes("/timedelta")
+        )
+      ).toHaveLength(1);
+    });
+
+    const scheduledGesture = getDragGesture(getAllByTestId as never);
+    startDrag(scheduledGesture);
+    // absoluteY 168 -> slotIndex 7 -> 12:30pm (750 minutes)
+    moveDrag(scheduledGesture, 168);
+    endDrag(scheduledGesture);
+
+    await waitFor(() => {
+      expect(
+        (global.fetch as jest.Mock).mock.calls.filter(([url]: [string]) =>
+          typeof url === "string" && url.includes("/timedelta")
+        )
+      ).toHaveLength(2);
+    });
+
+    const timedeltaCalls = (global.fetch as jest.Mock).mock.calls.filter(
+      ([url]: [string]) =>
+        typeof url === "string" && url.includes("/timedelta")
+    );
+    const moveUrl = timedeltaCalls[1][0] as string;
+    expect(moveUrl).toContain(
+      `timestamp=${encodeURIComponent("2000-01-01T12:30:00.000Z")}`
+    );
+    expect(moveUrl).toContain("value=60");
+  });
+
+  it("rolls back the scheduled task and shows an error when Timedelta fails", async () => {
+    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/timedelta")) {
+        return Promise.reject(new Error("Network error"));
+      }
+      return jsonResponse(500, { error: "Unexpected fetch in test" });
+    });
+
+    const { getByText, getAllByTestId, queryByTestId, queryByText } =
+      await renderToday([
+        {
+          title: "Go to the gym",
+          timeRequired: "1h",
+          importance: "High",
+          urgency: "Low",
+        },
+      ]);
+
+    await completeIntro(getByText);
+    await fireEvent.press(getByText("Block Time"));
+
+    const gesture = getDragGesture(getAllByTestId as never);
+    startDrag(gesture);
+    moveDrag(gesture, 120);
+    endDrag(gesture);
+
+    await waitFor(() => {
+      expect(getByText("An error occured!")).toBeTruthy();
+      expect(getByText(NETWORK_ERROR_MESSAGE)).toBeTruthy();
+    });
+
+    expect(queryByTestId(/^scheduled-task-/)).toBeNull();
+    expect(getByText("Go to the gym")).toBeTruthy();
+    expect(queryByText("Try Again")).toBeNull();
+  });
+
+  it("keeps the task scheduled when the Timedelta Service succeeds", async () => {
+    const { getByText, getByTestId, getAllByTestId, queryByText, queryByTestId } =
+      await renderToday([
+        {
+          title: "Go to the gym",
+          timeRequired: "1h",
+          importance: "High",
+          urgency: "Low",
+        },
+      ]);
+
+    await completeIntro(getByText);
+    await fireEvent.press(getByText("Block Time"));
+
+    const gesture = getDragGesture(getAllByTestId as never);
+    startDrag(gesture);
+    moveDrag(gesture, 120);
+    endDrag(gesture);
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    expect(getByTestId(/^scheduled-task-/)).toBeTruthy();
+    expect(queryByText("An error occured!")).toBeNull();
+    expect(queryByTestId("stop-moving-button")).toBeNull();
   });
 });
