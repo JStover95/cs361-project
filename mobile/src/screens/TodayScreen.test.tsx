@@ -159,18 +159,34 @@ function endDrag(gesture: QueriedElement) {
   });
 }
 
+function layoutDeleteButton(
+  getByTestId: (id: string | RegExp) => QueriedElement,
+  layout = { x: 100, y: 400, width: 64, height: 64 }
+) {
+  const stopButton = getByTestId("stop-moving-button");
+  act(() => {
+    (
+      stopButton.props.onLayout as ((event: unknown) => void) | undefined
+    )?.({
+      nativeEvent: { layout },
+    });
+  });
+  return stopButton;
+}
+
 function getStyleProp(
   element: QueriedElement,
   key: string
-): number | undefined {
+): number | string | undefined {
   const style = element.props.style;
   const styles = Array.isArray(style) ? style : [style];
+  let value: number | string | undefined;
   for (const entry of styles) {
     if (entry && typeof entry === "object" && key in entry) {
-      return (entry as Record<string, number>)[key];
+      value = (entry as Record<string, number | string>)[key];
     }
   }
-  return undefined;
+  return value;
 }
 
 describe("TodayScreen", () => {
@@ -408,7 +424,9 @@ describe("TodayScreen", () => {
     expect(getByText("Block Time")).toBeTruthy();
     expect(queryByTestId("stop-moving-button")).toBeNull();
     expect(getByTestId("bottom-sheet")).toBeTruthy();
-    expect(queryByTestId(/^task-drag-/)).toBeNull();
+    // Scheduled cards are also draggable; the unscheduled sheet list is empty.
+    expect(getByTestId(/^scheduled-task-/)).toBeTruthy();
+    expect(getAllByTestId(/^task-drag-/)).toHaveLength(1);
 
     const scheduled = getByTestId(/^scheduled-task-/);
     expect(getByText("Go to the gym")).toBeTruthy();
@@ -471,8 +489,9 @@ describe("TodayScreen", () => {
 
     expect(getByTestId(/^scheduled-task-/)).toBeTruthy();
 
-    // Only "Read a book" remains in the sheet
-    const secondGesture = getDragGesture(getAllByTestId as never, 0);
+    // Scheduled card is also draggable; the remaining sheet item is last.
+    const gestures = getAllByTestId(/^task-drag-/) as unknown as QueriedElement[];
+    const secondGesture = gestures[gestures.length - 1];
     startDrag(secondGesture);
     moveDrag(secondGesture, 96);
     endDrag(secondGesture);
@@ -485,11 +504,162 @@ describe("TodayScreen", () => {
     expect(getByText("Today")).toBeTruthy();
     expect(queryByTestId("stop-moving-button")).toBeNull();
     expect(getByText("Read a book")).toBeTruthy();
-    expect(getByTestId(/^task-drag-/)).toBeTruthy();
+    expect(getAllByTestId(/^task-drag-/).length).toBeGreaterThanOrEqual(1);
 
     await fireEvent.press(getByText("Go back"));
     expect(queryByText("An error occured!")).toBeNull();
     expect(getByText("Today")).toBeTruthy();
     expect(getByText("Read a book")).toBeTruthy();
+  });
+
+  async function scheduleTaskViaDrag(
+    getByText: (text: string | RegExp) => ReturnType<
+      Awaited<ReturnType<typeof renderToday>>["getByText"]
+    >,
+    getAllByTestId: (id: string | RegExp) => QueriedElement[],
+    absoluteY = 120
+  ) {
+    await completeIntro(getByText);
+    await fireEvent.press(getByText("Block Time"));
+    const gesture = getDragGesture(getAllByTestId as never);
+    startDrag(gesture);
+    moveDrag(gesture, absoluteY);
+    endDrag(gesture);
+  }
+
+  it("dragging a scheduled task enters moving mode", async () => {
+    const { getByText, getByTestId, getAllByTestId, queryByText } =
+      await renderToday([
+        {
+          title: "Go to the gym",
+          timeRequired: "1h",
+          importance: "High",
+          urgency: "Low",
+        },
+      ]);
+
+    await scheduleTaskViaDrag(getByText, getAllByTestId as never);
+
+    expect(getByTestId(/^scheduled-task-/)).toBeTruthy();
+    const scheduledGesture = getDragGesture(getAllByTestId as never);
+    startDrag(scheduledGesture);
+
+    expect(queryByText("Today")).toBeNull();
+    expect(getByTestId("stop-moving-button")).toBeTruthy();
+    expect(getByTestId("drag-ghost")).toBeTruthy();
+    // Original schedule card stays mounted (gesture) but is hidden — no duplicate.
+    expect(getStyleProp(getByTestId(/^scheduled-task-/) as never, "opacity")).toBe(
+      0
+    );
+  });
+
+  it("dragging a scheduled task over the schedule still highlights and reschedules on drop", async () => {
+    const { getByText, getByTestId, getAllByTestId, queryByTestId } =
+      await renderToday([
+        {
+          title: "Go to the gym",
+          timeRequired: "1h",
+          importance: "High",
+          urgency: "Low",
+        },
+      ]);
+
+    await scheduleTaskViaDrag(getByText, getAllByTestId as never, 120);
+
+    const scheduledGesture = getDragGesture(getAllByTestId as never);
+    startDrag(scheduledGesture);
+    // absoluteY 168 with scheduleTop=0 -> slotIndex 7 -> 12:30pm; offset = 168
+    moveDrag(scheduledGesture, 168);
+
+    const highlight = getByTestId("drop-highlight");
+    expect(getStyleProp(highlight as never, "top")).toBe(168);
+    expect(getStyleProp(highlight as never, "height")).toBe(24);
+
+    endDrag(scheduledGesture);
+
+    expect(getByText("Today")).toBeTruthy();
+    expect(queryByTestId("stop-moving-button")).toBeNull();
+    const scheduled = getByTestId(/^scheduled-task-/);
+    expect(getStyleProp(scheduled as never, "top")).toBe(168);
+    expect(getStyleProp(scheduled as never, "height")).toBe(48);
+  });
+
+  it("dragging over the stop-moving button highlights it red and hides the blue highlight", async () => {
+    const { getByText, getByTestId, getAllByTestId, queryByTestId } =
+      await renderToday([
+        {
+          title: "Go to the gym",
+          timeRequired: "1h",
+          importance: "High",
+          urgency: "Low",
+        },
+      ]);
+
+    await scheduleTaskViaDrag(getByText, getAllByTestId as never);
+
+    const scheduledGesture = getDragGesture(getAllByTestId as never);
+    startDrag(scheduledGesture);
+    layoutDeleteButton(getByTestId as never);
+    // Root-relative coords inside the delete button bounds
+    moveDrag(scheduledGesture, 420, 120);
+
+    expect(
+      getStyleProp(getByTestId("stop-moving-button") as never, "backgroundColor")
+    ).toBe("#EF4444");
+    expect(queryByTestId("drop-highlight")).toBeNull();
+  });
+
+  it("dropping while hovering over the stop-moving button removes the task from the schedule and returns it to the bottom sheet", async () => {
+    const { getByText, getByTestId, getAllByTestId, queryByTestId } =
+      await renderToday([
+        {
+          title: "Go to the gym",
+          timeRequired: "1h",
+          importance: "High",
+          urgency: "Low",
+        },
+      ]);
+
+    await scheduleTaskViaDrag(getByText, getAllByTestId as never);
+
+    const scheduledGesture = getDragGesture(getAllByTestId as never);
+    startDrag(scheduledGesture);
+    layoutDeleteButton(getByTestId as never);
+    moveDrag(scheduledGesture, 420, 120);
+    endDrag(scheduledGesture);
+
+    expect(queryByTestId(/^scheduled-task-/)).toBeNull();
+    expect(getByText("Today")).toBeTruthy();
+    expect(queryByTestId("stop-moving-button")).toBeNull();
+    expect(getByText("Go to the gym")).toBeTruthy();
+    expect(getByTestId(/^task-drag-/)).toBeTruthy();
+  });
+
+  it("dropping a bottom-sheet task over the stop-moving button while it was never scheduled is a no-op", async () => {
+    const { getByText, getByTestId, getAllByTestId, queryByTestId, queryByText } =
+      await renderToday([
+        {
+          title: "Go to the gym",
+          timeRequired: "1h",
+          importance: "High",
+          urgency: "Low",
+        },
+      ]);
+
+    await completeIntro(getByText);
+    await fireEvent.press(getByText("Block Time"));
+
+    const gesture = getDragGesture(getAllByTestId as never);
+    startDrag(gesture);
+    layoutDeleteButton(getByTestId as never);
+    moveDrag(gesture, 420, 120);
+    endDrag(gesture);
+
+    expect(queryByTestId(/^scheduled-task-/)).toBeNull();
+    expect(getByText("Today")).toBeTruthy();
+    expect(queryByTestId("stop-moving-button")).toBeNull();
+    expect(getByText("Go to the gym")).toBeTruthy();
+    expect(getByTestId(/^task-drag-/)).toBeTruthy();
+    expect(queryByText("An error occured!")).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  LayoutChangeEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -7,6 +8,12 @@ import {
   Text,
   View,
 } from "react-native";
+import {
+  PanGestureHandler,
+  PanGestureHandlerGestureEvent,
+  PanGestureHandlerStateChangeEvent,
+  State,
+} from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button } from "../components/Button";
 import { ErrorModal } from "../components/ErrorModal";
@@ -67,6 +74,7 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
     simulateFailure,
     setSimulateFailure,
     scheduleTask,
+    unscheduleTask,
   } = useTasks();
   const [showIntro, setShowIntro] = useState(true);
   const [showTooltip, setShowTooltip] = useState(false);
@@ -76,6 +84,7 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
   const [dragX, setDragX] = useState<number | null>(null);
   const [dragY, setDragY] = useState<number | null>(null);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [isOverDeleteZone, setIsOverDeleteZone] = useState(false);
 
   const scheduleRef = useRef<View>(null);
   const rootRef = useRef<View>(null);
@@ -83,6 +92,13 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
   const rootOffsetRef = useRef({ x: 0, y: 0 });
   const movingTaskRef = useRef<Task | null>(null);
   const highlightStartRef = useRef<number | null>(null);
+  const deleteButtonBoundsRef = useRef<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const overDeleteRef = useRef(false);
 
   const isMoving = movingTask != null;
   const scheduledTasks = tasks.filter(
@@ -129,10 +145,12 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
   const handleDragStart = useCallback((task: Task) => {
     movingTaskRef.current = task;
     highlightStartRef.current = null;
+    overDeleteRef.current = false;
     setMovingTask(task);
     setHighlightOffset(null);
     setDragX(null);
     setDragY(null);
+    setIsOverDeleteZone(false);
     // Chrome collapses on the next paint; remeasure after layout settles.
     requestAnimationFrame(() => {
       measureSchedule();
@@ -141,6 +159,30 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
   }, [measureSchedule, measureRoot]);
 
   const handleDragMove = useCallback((absoluteX: number, absoluteY: number) => {
+    // Convert window coords → root-local so the ghost top matches window Y
+    // (same space the schedule highlight is measured in).
+    const localX = absoluteX - rootOffsetRef.current.x;
+    const localY = absoluteY - rootOffsetRef.current.y;
+    setDragX(localX);
+    setDragY(localY);
+
+    const bounds = deleteButtonBoundsRef.current;
+    const overDelete =
+      bounds != null &&
+      localX >= bounds.x &&
+      localX <= bounds.x + bounds.width &&
+      localY >= bounds.y &&
+      localY <= bounds.y + bounds.height;
+
+    overDeleteRef.current = overDelete;
+    setIsOverDeleteZone(overDelete);
+
+    if (overDelete) {
+      highlightStartRef.current = null;
+      setHighlightOffset(null);
+      return;
+    }
+
     const relativeY = Math.max(0, absoluteY - scheduleTopRef.current);
     const slotIndex = Math.floor(relativeY / SLOT_HEIGHT);
     const start = SCHEDULE_START_MINUTES + slotIndex * SLOT_MINUTES;
@@ -149,23 +191,37 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
     const snappedOffset = slotIndex * SLOT_HEIGHT;
     highlightStartRef.current = start;
     setHighlightOffset(snappedOffset);
-    // Convert window coords → root-local so the ghost top matches window Y
-    // (same space the schedule highlight is measured in).
-    setDragX(absoluteX - rootOffsetRef.current.x);
-    setDragY(absoluteY - rootOffsetRef.current.y);
   }, []);
 
   const handleDragEnd = useCallback(() => {
     const task = movingTaskRef.current;
     const start = highlightStartRef.current;
+    const overDelete = overDeleteRef.current;
     movingTaskRef.current = null;
     highlightStartRef.current = null;
+    overDeleteRef.current = false;
     setMovingTask(null);
     setHighlightOffset(null);
     setDragX(null);
     setDragY(null);
+    setIsOverDeleteZone(false);
 
-    if (!task || start == null) {
+    if (!task) {
+      return;
+    }
+
+    if (overDelete) {
+      try {
+        unscheduleTask(task.id);
+      } catch (e) {
+        setScheduleError(
+          e instanceof Error ? e.message : "Something went wrong."
+        );
+      }
+      return;
+    }
+
+    if (start == null) {
       return;
     }
 
@@ -176,7 +232,34 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
         e instanceof Error ? e.message : "Something went wrong."
       );
     }
-  }, [scheduleTask]);
+  }, [scheduleTask, unscheduleTask]);
+
+  const handleScheduledDragStateChange = useCallback(
+    (task: Task) => (event: PanGestureHandlerStateChangeEvent) => {
+      if (event.nativeEvent.state === State.ACTIVE) {
+        handleDragStart(task);
+        return;
+      }
+      if (event.nativeEvent.oldState === State.ACTIVE) {
+        handleDragEnd();
+      }
+    },
+    [handleDragStart, handleDragEnd]
+  );
+
+  const handleScheduledDragGesture = useCallback(
+    (event: PanGestureHandlerGestureEvent) => {
+      handleDragMove(
+        event.nativeEvent.absoluteX,
+        event.nativeEvent.absoluteY
+      );
+    },
+    [handleDragMove]
+  );
+
+  const handleDeleteButtonLayout = useCallback((event: LayoutChangeEvent) => {
+    deleteButtonBoundsRef.current = event.nativeEvent.layout;
+  }, []);
 
   return (
     <View
@@ -260,6 +343,7 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
               const start = task.scheduledStartMinutes!;
               const duration = getDurationMinutes(task.timeRequired);
               const color = getEisenhowerColor(task.importance, task.urgency);
+              const isBeingMoved = movingTask?.id === task.id;
               return (
                 <View
                   key={task.id}
@@ -269,23 +353,39 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
                     {
                       top: minutesToOffset(start),
                       height: (duration / 60) * HOUR_HEIGHT,
+                      // Keep mounted so the pan gesture is not torn down mid-drag.
+                      opacity: isBeingMoved ? 0 : 1,
                     },
                   ]}
                 >
-                  <Text style={styles.scheduledTaskTitle} numberOfLines={2}>
-                    {task.title}
-                  </Text>
-                  <View
-                    style={[
-                      styles.scheduledDot,
-                      {
-                        backgroundColor: COLOR_MAP[color],
-                        borderColor:
-                          color === "delete" ? "#999999" : COLOR_MAP[color],
-                        borderWidth: color === "delete" ? 2 : 0,
-                      },
-                    ]}
-                  />
+                  <PanGestureHandler
+                    testID={`task-drag-${task.id}`}
+                    onGestureEvent={handleScheduledDragGesture}
+                    onHandlerStateChange={handleScheduledDragStateChange(task)}
+                    activeOffsetY={[-10, 10]}
+                  >
+                    <View style={styles.scheduledTaskInner}>
+                      <Text
+                        style={styles.scheduledTaskTitle}
+                        numberOfLines={2}
+                      >
+                        {task.title}
+                      </Text>
+                      <View
+                        style={[
+                          styles.scheduledDot,
+                          {
+                            backgroundColor: COLOR_MAP[color],
+                            borderColor:
+                              color === "delete"
+                                ? "#999999"
+                                : COLOR_MAP[color],
+                            borderWidth: color === "delete" ? 2 : 0,
+                          },
+                        ]}
+                      />
+                    </View>
+                  </PanGestureHandler>
                 </View>
               );
             })}
@@ -306,7 +406,11 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
           accessibilityRole="button"
           accessibilityLabel="Stop moving"
           onPress={() => {}}
-          style={styles.stopMovingButton}
+          onLayout={handleDeleteButtonLayout}
+          style={[
+            styles.stopMovingButton,
+            isOverDeleteZone && styles.stopMovingButtonActive,
+          ]}
         >
           <Text style={styles.stopMovingLabel}>×</Text>
         </Pressable>
@@ -449,14 +553,17 @@ const styles = StyleSheet.create({
     borderColor: "#E5E5E5",
     paddingHorizontal: 12,
     paddingVertical: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.15,
     shadowRadius: 3,
     elevation: 2,
+  },
+  scheduledTaskInner: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   scheduledTaskTitle: {
     flex: 1,
@@ -481,6 +588,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     zIndex: 20,
+  },
+  stopMovingButtonActive: {
+    backgroundColor: COLOR_MAP.red,
   },
   stopMovingLabel: {
     color: "#fff",

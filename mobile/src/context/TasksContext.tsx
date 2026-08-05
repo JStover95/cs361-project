@@ -35,6 +35,7 @@ type TasksContextValue = {
   deleteTask: (id: string) => void;
   undoDelete: () => void;
   scheduleTask: (id: string, startMinutes: number) => void;
+  unscheduleTask: (id: string) => void;
 };
 
 const TasksContext = createContext<TasksContextValue | null>(null);
@@ -198,6 +199,22 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     [throwIfSimulatingFailure, currentUserId]
   );
 
+  const unscheduleTask = useCallback(
+    (id: string) => {
+      throwIfSimulatingFailure();
+      setTaskMap((prev) => {
+        const current = prev.get(id);
+        if (!current || current.deleted || current.scheduledStartMinutes == null) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.set(id, { ...current, scheduledStartMinutes: null });
+        return next;
+      });
+    },
+    [throwIfSimulatingFailure]
+  );
+
   const value = useMemo(
     () => ({
       tasks,
@@ -210,6 +227,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       deleteTask,
       undoDelete,
       scheduleTask,
+      unscheduleTask,
     }),
     [
       tasks,
@@ -221,6 +239,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       deleteTask,
       undoDelete,
       scheduleTask,
+      unscheduleTask,
     ]
   );
 

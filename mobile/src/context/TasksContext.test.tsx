@@ -18,6 +18,7 @@ function TasksProbe() {
     deleteTask,
     undoDelete,
     scheduleTask,
+    unscheduleTask,
     listTasks,
   } = useTasks();
   const [actionError, setActionError] = useState<string | null>(null);
@@ -162,6 +163,19 @@ function TasksProbe() {
       >
         <Text>List Unscheduled</Text>
       </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() =>
+          run(() => {
+            const apple = tasks.find((t) => t.title === "Apple");
+            if (apple) {
+              unscheduleTask(apple.id);
+            }
+          })
+        }
+      >
+        <Text>Unschedule Apple</Text>
+      </Pressable>
     </View>
   );
 }
@@ -176,6 +190,7 @@ function FailureProbe() {
     updateTask,
     deleteTask,
     scheduleTask,
+    unscheduleTask,
   } = useTasks();
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -275,6 +290,19 @@ function FailureProbe() {
         }
       >
         <Text>Schedule First</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() =>
+          run(() => {
+            const first = tasks[0];
+            if (first) {
+              unscheduleTask(first.id);
+            }
+          })
+        }
+      >
+        <Text>Unschedule First</Text>
       </Pressable>
     </View>
   );
@@ -500,6 +528,21 @@ describe("TasksContext", () => {
     expect(getByTestId("task-count").props.children).toBe(2);
   });
 
+  it("unschedules a task and returns it to the unscheduled list", async () => {
+    const { getByText, getByTestId } = await renderWithProviders(<TasksProbe />);
+
+    await fireEvent.press(getByText("Add Apple"));
+    await fireEvent.press(getByText("Schedule Apple 11:30"));
+    expect(getByText(/Apple\|30m\|Low\|High\|690/)).toBeTruthy();
+
+    await fireEvent.press(getByText("Unschedule Apple"));
+
+    expect(getByTestId("action-error").props.children).toBe("none");
+    expect(getByText(/Apple\|30m\|Low\|High\|unscheduled/)).toBeTruthy();
+    await fireEvent.press(getByText("List Unscheduled"));
+    expect(getByTestId("listed-count").props.children).toBe(1);
+  });
+
   it("throws on add, update, delete, list, and schedule when simulateFailure is enabled", async () => {
     const { getByText, getByTestId } = await renderWithProviders(
       <FailureProbe />
@@ -550,6 +593,24 @@ describe("TasksContext", () => {
     await fireEvent.press(getByText("Update First"));
     expect(getByTestId("action-error").props.children).toBe("none");
     expect(getByText(/Updated\|2h\|High\|High/)).toBeTruthy();
+  });
+
+  it("throws on unschedule when simulateFailure is enabled and leaves the task scheduled", async () => {
+    const { getByText, getByTestId } = await renderWithProviders(
+      <FailureProbe />
+    );
+
+    await fireEvent.press(getByText("Add Apple"));
+    await fireEvent.press(getByText("Schedule First"));
+    expect(getByText(/Apple\|30m\|Low\|High\|600/)).toBeTruthy();
+
+    await fireEvent.press(getByText("Enable Failure"));
+    await fireEvent.press(getByText("Unschedule First"));
+
+    expect(getByTestId("action-error").props.children).toBe(
+      NETWORK_ERROR_MESSAGE
+    );
+    expect(getByText(/Apple\|30m\|Low\|High\|600/)).toBeTruthy();
   });
 });
 
