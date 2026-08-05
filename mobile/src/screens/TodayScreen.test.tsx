@@ -94,14 +94,15 @@ function renderToday(
     importance: "High" | "Low";
     urgency: "High" | "Low";
   }> = [],
-  onLogout?: () => void
+  onLogout?: () => void,
+  onViewMatrix?: () => void
 ) {
   return render(
     <AuthProvider>
       <TasksProvider>
         <LoginProbe />
         <SeedTasks tasks={seed} />
-        <TodayScreen onLogout={onLogout} />
+        <TodayScreen onLogout={onLogout} onViewMatrix={onViewMatrix} />
       </TasksProvider>
     </AuthProvider>
   );
@@ -236,6 +237,16 @@ describe("TodayScreen", () => {
 
     expect(queryByText("Welcome!")).toBeNull();
     expect(getByText("Start with blocking some time")).toBeTruthy();
+  });
+
+  it("calls onViewMatrix when the View Matrix button is pressed", async () => {
+    const onViewMatrix = jest.fn();
+    const { getByText } = await renderToday([], undefined, onViewMatrix);
+
+    await completeIntro(getByText);
+    await fireEvent.press(getByText("View Matrix"));
+
+    expect(onViewMatrix).toHaveBeenCalledTimes(1);
   });
 
   it("hides tooltip when Block Time is pressed after intro", async () => {

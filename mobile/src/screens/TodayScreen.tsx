@@ -64,9 +64,10 @@ function minutesToOffset(minutes: number): number {
 
 type TodayScreenProps = {
   onLogout?: () => void;
+  onViewMatrix?: () => void;
 };
 
-export function TodayScreen({ onLogout }: TodayScreenProps) {
+export function TodayScreen({ onLogout, onViewMatrix }: TodayScreenProps) {
   const { logout } = useAuthContext();
   const {
     tasks,
@@ -301,7 +302,7 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
             </View>
 
             <View style={styles.actions}>
-              <Button label="View Matrix" onPress={() => {}} />
+              <Button label="View Matrix" onPress={() => onViewMatrix?.()} />
               <Button
                 label="Block Time"
                 onPress={() => setShowTooltip(false)}

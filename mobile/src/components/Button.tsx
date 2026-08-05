@@ -7,6 +7,7 @@ type ButtonProps = {
   loading?: boolean;
   shape?: "pill" | "circle";
   color?: "grey" | "red";
+  active?: boolean;
 };
 
 export function Button({
@@ -16,6 +17,7 @@ export function Button({
   loading = false,
   shape = "pill",
   color = "grey",
+  active = false,
 }: ButtonProps) {
   const isDisabled = disabled || loading;
 
@@ -25,6 +27,7 @@ export function Button({
         styles.button,
         shape === "circle" && styles.circle,
         color === "red" && styles.red,
+        active && styles.active,
       ]}
       onPress={onPress}
       disabled={isDisabled}
@@ -38,7 +41,13 @@ export function Button({
           accessibilityLabel="Loading"
         />
       ) : (
-        <Text style={[styles.label, shape === "circle" && styles.circleLabel]}>
+        <Text
+          style={[
+            styles.label,
+            shape === "circle" && styles.circleLabel,
+            active && styles.activeLabel,
+          ]}
+        >
           {label}
         </Text>
       )}
@@ -68,6 +77,9 @@ const styles = StyleSheet.create({
   red: {
     backgroundColor: "#EF4444",
   },
+  active: {
+    backgroundColor: "#000",
+  },
   label: {
     fontSize: 16,
     color: "#000",
@@ -75,5 +87,8 @@ const styles = StyleSheet.create({
   circleLabel: {
     fontSize: 28,
     lineHeight: 32,
+  },
+  activeLabel: {
+    color: "#fff",
   },
 });

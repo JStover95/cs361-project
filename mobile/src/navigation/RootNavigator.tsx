@@ -1,11 +1,13 @@
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { AuthScreen } from "../screens/AuthScreen";
+import { MatrixScreen } from "../screens/MatrixScreen";
 import { TodayScreen } from "../screens/TodayScreen";
 
 export type RootStackParamList = {
   Auth: undefined;
   Today: undefined;
+  Matrix: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -38,7 +40,13 @@ export function RootNavigator() {
                   routes: [{ name: "Auth" }],
                 })
               }
+              onViewMatrix={() => navigation.navigate("Matrix")}
             />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Matrix">
+          {({ navigation }) => (
+            <MatrixScreen onClose={() => navigation.goBack()} />
           )}
         </Stack.Screen>
       </Stack.Navigator>

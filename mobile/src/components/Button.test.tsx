@@ -56,4 +56,20 @@ describe("Button", () => {
 
     expect(onPress).not.toHaveBeenCalled();
   });
+
+  it("renders with an active/black style when active is passed", async () => {
+    const { getByRole, getByText } = await render(
+      <Button label="View Matrix" onPress={() => {}} active />
+    );
+
+    const button = getByRole("button");
+    const flatStyle = Array.isArray(button.props.style)
+      ? Object.assign({}, ...button.props.style.filter(Boolean))
+      : button.props.style;
+
+    expect(flatStyle.backgroundColor).toBe("#000");
+    expect(getByText("View Matrix").props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ color: "#fff" })])
+    );
+  });
 });
