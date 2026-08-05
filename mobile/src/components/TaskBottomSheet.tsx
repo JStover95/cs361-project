@@ -26,7 +26,7 @@ type SheetMode = "list" | "creating" | "updating" | "deleting";
 type TaskBottomSheetProps = {
   hidden?: boolean;
   onDragStart?: (task: Task) => void;
-  onDragMove?: (absoluteY: number) => void;
+  onDragMove?: (absoluteX: number, absoluteY: number) => void;
   onDragEnd?: () => void;
 };
 
@@ -49,10 +49,23 @@ export function TaskBottomSheet({
   const [isDragging, setIsDragging] = useState(false);
 
   const snapPoints = useMemo(() => ["12%", "55%", "90%"], []);
+  const wasHiddenRef = useRef(hidden);
 
   useEffect(() => {
     sheetRef.current?.snapToIndex(1);
   }, [mode]);
+
+  // While hidden (moving mode), collapse to the closed snap so the sheet is
+  // already closed when we transition back to normal. Also snap closed when
+  // becoming visible again in case the sheet stayed mounted mid-drag.
+  useEffect(() => {
+    if (hidden) {
+      sheetRef.current?.snapToIndex(0);
+    } else if (wasHiddenRef.current) {
+      sheetRef.current?.snapToIndex(0);
+    }
+    wasHiddenRef.current = hidden;
+  }, [hidden]);
 
   const runAction = useCallback((action: () => void) => {
     try {
@@ -182,7 +195,10 @@ export function TaskBottomSheet({
       };
 
       const handleDragGesture = (event: PanGestureHandlerGestureEvent) => {
-        onDragMove?.(event.nativeEvent.absoluteY);
+        onDragMove?.(
+          event.nativeEvent.absoluteX,
+          event.nativeEvent.absoluteY
+        );
       };
 
       return (
@@ -191,7 +207,6 @@ export function TaskBottomSheet({
           onGestureEvent={handleDragGesture}
           onHandlerStateChange={handleDragStateChange}
           activeOffsetY={[-10, 10]}
-          failOffsetX={[-10, 10]}
         >
           <View>
             <SwipeToDelete onDelete={() => handleSwipeDelete(item)}>

@@ -135,10 +135,14 @@ function startDrag(gesture: QueriedElement) {
   });
 }
 
-function moveDrag(gesture: QueriedElement, absoluteY: number) {
+function moveDrag(
+  gesture: QueriedElement,
+  absoluteY: number,
+  absoluteX = 0
+) {
   act(() => {
     (gesture.props.onGestureEvent as ((event: unknown) => void) | undefined)?.({
-      nativeEvent: { absoluteY },
+      nativeEvent: { absoluteX, absoluteY },
     });
   });
 }
@@ -366,12 +370,18 @@ describe("TodayScreen", () => {
     const gesture = getDragGesture(getAllByTestId as never);
     startDrag(gesture);
     // absoluteY 120 with scheduleTop=0 -> slotIndex 5 -> 11:30am (690)
-    // offset = ((690 - 540) / 60) * 48 = 120
+    // offset = 5 * 24 = 120
     moveDrag(gesture, 120);
 
     const highlight = getByTestId("drop-highlight");
     expect(getStyleProp(highlight as never, "top")).toBe(120);
     expect(getStyleProp(highlight as never, "height")).toBe(24);
+
+    // Mid-slot finger position still snaps to the same 30-minute grid line
+    moveDrag(gesture, 130);
+    expect(getStyleProp(getByTestId("drop-highlight") as never, "top")).toBe(
+      120
+    );
   });
 
   it("schedules the task on drop and returns to normal mode", async () => {

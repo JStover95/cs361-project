@@ -18,6 +18,7 @@ type BottomSheetProps = ViewProps & {
   onClose?: () => void;
   backgroundStyle?: object;
   handleIndicatorStyle?: object;
+  containerStyle?: object;
   footerComponent?:
     | React.FC<BottomSheetFooterProps>
     | React.ReactElement
@@ -29,13 +30,18 @@ type BottomSheetFooterProps = ViewProps & {
   bottomInset?: number;
 };
 
+export const mockSnapToIndex = jest.fn();
+export const mockClose = jest.fn();
+export const mockExpand = jest.fn();
+export const mockCollapse = jest.fn();
+
 const BottomSheet = forwardRef<BottomSheetMethods, BottomSheetProps>(
   ({ children, footerComponent, ...props }, ref) => {
     useImperativeHandle(ref, () => ({
-      snapToIndex: jest.fn(),
-      close: jest.fn(),
-      expand: jest.fn(),
-      collapse: jest.fn(),
+      snapToIndex: mockSnapToIndex,
+      close: mockClose,
+      expand: mockExpand,
+      collapse: mockCollapse,
     }));
 
     const footer =

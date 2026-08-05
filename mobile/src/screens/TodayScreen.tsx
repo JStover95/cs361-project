@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -72,12 +72,15 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
   const [showTooltip, setShowTooltip] = useState(false);
   const [showLogoutConfirmation, setShowLogoutConfirmation] = useState(false);
   const [movingTask, setMovingTask] = useState<Task | null>(null);
-  const [highlightStart, setHighlightStart] = useState<number | null>(null);
+  const [highlightOffset, setHighlightOffset] = useState<number | null>(null);
+  const [dragX, setDragX] = useState<number | null>(null);
   const [dragY, setDragY] = useState<number | null>(null);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
 
   const scheduleRef = useRef<View>(null);
+  const rootRef = useRef<View>(null);
   const scheduleTopRef = useRef(0);
+  const rootOffsetRef = useRef({ x: 0, y: 0 });
   const movingTaskRef = useRef<Task | null>(null);
   const highlightStartRef = useRef<number | null>(null);
 
@@ -105,27 +108,51 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
     onLogout?.();
   };
 
-  const handleScheduleLayout = useCallback(() => {
+  const measureSchedule = useCallback(() => {
     scheduleRef.current?.measureInWindow((_x, y) => {
       scheduleTopRef.current = y;
     });
   }, []);
 
+  const measureRoot = useCallback(() => {
+    rootRef.current?.measureInWindow((x, y) => {
+      rootOffsetRef.current = { x, y };
+    });
+  }, []);
+
+  // Remeasure when chrome hides/shows so scheduleTop stays in sync with the card.
+  useEffect(() => {
+    measureSchedule();
+    measureRoot();
+  }, [isMoving, measureSchedule, measureRoot]);
+
   const handleDragStart = useCallback((task: Task) => {
     movingTaskRef.current = task;
     highlightStartRef.current = null;
     setMovingTask(task);
-    setHighlightStart(null);
+    setHighlightOffset(null);
+    setDragX(null);
     setDragY(null);
-  }, []);
+    // Chrome collapses on the next paint; remeasure after layout settles.
+    requestAnimationFrame(() => {
+      measureSchedule();
+      measureRoot();
+    });
+  }, [measureSchedule, measureRoot]);
 
-  const handleDragMove = useCallback((absoluteY: number) => {
+  const handleDragMove = useCallback((absoluteX: number, absoluteY: number) => {
     const relativeY = Math.max(0, absoluteY - scheduleTopRef.current);
     const slotIndex = Math.floor(relativeY / SLOT_HEIGHT);
     const start = SCHEDULE_START_MINUTES + slotIndex * SLOT_MINUTES;
+    // Snap the blue shadow to the 30-minute grid slot under the card top —
+    // the same start time assigned on drop.
+    const snappedOffset = slotIndex * SLOT_HEIGHT;
     highlightStartRef.current = start;
-    setHighlightStart(start);
-    setDragY(absoluteY);
+    setHighlightOffset(snappedOffset);
+    // Convert window coords → root-local so the ghost top matches window Y
+    // (same space the schedule highlight is measured in).
+    setDragX(absoluteX - rootOffsetRef.current.x);
+    setDragY(absoluteY - rootOffsetRef.current.y);
   }, []);
 
   const handleDragEnd = useCallback(() => {
@@ -134,7 +161,8 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
     movingTaskRef.current = null;
     highlightStartRef.current = null;
     setMovingTask(null);
-    setHighlightStart(null);
+    setHighlightOffset(null);
+    setDragX(null);
     setDragY(null);
 
     if (!task || start == null) {
@@ -151,6 +179,12 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
   }, [scheduleTask]);
 
   return (
+    <View
+      ref={rootRef}
+      style={styles.root}
+      onLayout={measureRoot}
+      testID="today-screen-root"
+    >
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <View style={styles.header}>
         <Button label="Logout" onPress={handleLogoutPress} />
@@ -199,7 +233,7 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
           <View
             ref={scheduleRef}
             style={styles.scheduleGrid}
-            onLayout={handleScheduleLayout}
+            onLayout={measureSchedule}
           >
             {HOURS.map((hour) => (
               <View key={hour} style={styles.hourRow}>
@@ -208,14 +242,14 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
               </View>
             ))}
 
-            {isMoving && highlightStart != null && (
+            {isMoving && highlightOffset != null && (
               <View
                 testID="drop-highlight"
                 pointerEvents="none"
                 style={[
                   styles.dropHighlight,
                   {
-                    top: minutesToOffset(highlightStart),
+                    top: highlightOffset,
                     height: SLOT_HEIGHT,
                   },
                 ]}
@@ -278,30 +312,6 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
         </Pressable>
       )}
 
-      {isMoving && movingTask && (
-        <View
-          testID="drag-ghost"
-          pointerEvents="none"
-          style={[styles.dragGhost, { top: dragY ?? 0 }]}
-        >
-          <Text style={styles.scheduledTaskTitle}>{movingTask.title}</Text>
-          <View
-            style={[
-              styles.scheduledDot,
-              {
-                backgroundColor:
-                  COLOR_MAP[
-                    getEisenhowerColor(
-                      movingTask.importance,
-                      movingTask.urgency
-                    )
-                  ],
-              },
-            ]}
-          />
-        </View>
-      )}
-
       <UndoToast taskId={lastDeletedTaskId} onUndo={undoDelete} />
 
       {showIntro && <WelcomeModal onFinish={handleIntroFinish} />}
@@ -320,10 +330,44 @@ export function TodayScreen({ onLogout }: TodayScreenProps) {
         />
       )}
     </SafeAreaView>
+
+      {isMoving && movingTask && (
+        <View
+          testID="drag-ghost"
+          pointerEvents="none"
+          style={[
+            styles.dragGhost,
+            {
+              left: dragX ?? 0,
+              top: dragY ?? 0,
+            },
+          ]}
+        >
+          <Text style={styles.scheduledTaskTitle}>{movingTask.title}</Text>
+          <View
+            style={[
+              styles.scheduledDot,
+              {
+                backgroundColor:
+                  COLOR_MAP[
+                    getEisenhowerColor(
+                      movingTask.importance,
+                      movingTask.urgency
+                    )
+                  ],
+              },
+            ]}
+          />
+        </View>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: "#fff",
@@ -446,8 +490,7 @@ const styles = StyleSheet.create({
   },
   dragGhost: {
     position: "absolute",
-    left: 88,
-    right: 24,
+    width: 220,
     backgroundColor: "#FFFFFF",
     borderRadius: 12,
     borderWidth: 1,

@@ -9,6 +9,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { act } from "react";
 import { Pressable, Text, View } from "react-native";
 import { State } from "react-native-gesture-handler";
+import { mockSnapToIndex } from "@gorhom/bottom-sheet";
 import { Task, Importance, Urgency } from "../types/task";
 import { TaskBottomSheet } from "./TaskBottomSheet";
 
@@ -95,7 +96,7 @@ type SheetOptions = {
   failureBeforeMount?: boolean;
   hidden?: boolean;
   onDragStart?: (task: Task) => void;
-  onDragMove?: (absoluteY: number) => void;
+  onDragMove?: (absoluteX: number, absoluteY: number) => void;
   onDragEnd?: () => void;
 };
 
@@ -148,6 +149,10 @@ function renderSheet(
 }
 
 describe("TaskBottomSheet", () => {
+  beforeEach(() => {
+    mockSnapToIndex.mockClear();
+  });
+
   it("renders list mode with Tasks label and add button", async () => {
     const { getByText } = await renderSheet();
 
@@ -464,11 +469,11 @@ describe("TaskBottomSheet", () => {
       (
         gesture!.props.onGestureEvent as ((event: unknown) => void) | undefined
       )?.({
-        nativeEvent: { absoluteY: 240 },
+        nativeEvent: { absoluteX: 100, absoluteY: 240 },
       });
     });
 
-    expect(onDragMove).toHaveBeenCalledWith(240);
+    expect(onDragMove).toHaveBeenCalledWith(100, 240);
 
     act(() => {
       (
@@ -551,7 +556,7 @@ describe("TaskBottomSheet", () => {
       (
         gesture.props.onGestureEvent as ((event: unknown) => void) | undefined
       )?.({
-        nativeEvent: { absoluteY: 240 },
+        nativeEvent: { absoluteX: 80, absoluteY: 240 },
       });
       (
         gesture.props.onHandlerStateChange as
@@ -562,7 +567,72 @@ describe("TaskBottomSheet", () => {
       });
     });
 
-    expect(onDragMove).toHaveBeenCalledWith(240);
+    expect(onDragMove).toHaveBeenCalledWith(80, 240);
     expect(onDragEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("snaps to the closed position when entering and leaving moving mode", async () => {
+    function DragThenHideSheet() {
+      const [hidden, setHidden] = useState(false);
+      return (
+        <TaskBottomSheet
+          hidden={hidden}
+          onDragStart={() => setHidden(true)}
+          onDragEnd={() => setHidden(false)}
+        />
+      );
+    }
+
+    const { getByText, getByTestId } = await render(
+      <AuthProvider>
+        <TasksProvider>
+          <SeedTasks
+            tasks={[
+              {
+                title: "Call mom",
+                timeRequired: "30m",
+                importance: "High",
+                urgency: "High",
+              },
+            ]}
+          />
+          <DragThenHideSheet />
+        </TasksProvider>
+      </AuthProvider>
+    );
+
+    expect(getByText("Call mom")).toBeTruthy();
+    // mode effect snaps open on mount
+    expect(mockSnapToIndex).toHaveBeenCalledWith(1);
+    mockSnapToIndex.mockClear();
+
+    const gesture = getByTestId(/^task-drag-/) as unknown as QueriedElement;
+
+    act(() => {
+      (
+        gesture.props.onHandlerStateChange as
+          | ((event: unknown) => void)
+          | undefined
+      )?.({
+        nativeEvent: { state: State.ACTIVE, oldState: State.BEGAN },
+      });
+    });
+
+    // Entering moving mode (hidden=true) collapses to closed snap
+    expect(mockSnapToIndex).toHaveBeenCalledWith(0);
+    mockSnapToIndex.mockClear();
+
+    act(() => {
+      (
+        gesture.props.onHandlerStateChange as
+          | ((event: unknown) => void)
+          | undefined
+      )?.({
+        nativeEvent: { state: State.END, oldState: State.ACTIVE },
+      });
+    });
+
+    // Leaving moving mode snaps closed again so normal mode starts collapsed
+    expect(mockSnapToIndex).toHaveBeenCalledWith(0);
   });
 });
