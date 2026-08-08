@@ -1,5 +1,6 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
-import { act, useEffect } from "react";
+import { act, useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { State } from "react-native-gesture-handler";
 import { AuthProvider, useAuthContext } from "../context/AuthContext";
@@ -9,7 +10,10 @@ import {
   TasksProvider,
   useTasks,
 } from "../context/TasksContext";
-import { TIMEDELTA_SERVICE_ENDPOINT } from "../utils/constants";
+import {
+  STORAGE_SERVICE_ENDPOINT,
+  TIMEDELTA_SERVICE_ENDPOINT,
+} from "../utils/constants";
 import { TodayScreen } from "./TodayScreen";
 
 jest.mock("react-native-gesture-handler", () => {
@@ -44,6 +48,15 @@ jest.mock("react-native-gesture-handler", () => {
 
 type QueriedElement = { props: Record<string, unknown> };
 
+type AsyncStorageMock = typeof AsyncStorage & {
+  __reset: () => void;
+};
+
+const mockStorage = AsyncStorage as AsyncStorageMock;
+
+let createCounter = 0;
+const records = new Map<string, Record<string, unknown>>();
+
 function SeedTasks({
   tasks,
 }: {
@@ -54,13 +67,58 @@ function SeedTasks({
     urgency: "High" | "Low";
   }>;
 }) {
-  const { addTask } = useTasks();
+  const { addTask, tasks: current, tasksLoading } = useTasks();
+  const [seeded, setSeeded] = useState(tasks.length === 0);
 
   useEffect(() => {
-    tasks.forEach((task) => addTask(task));
-  }, []);
+    if (tasksLoading || seeded || tasks.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      for (const task of tasks) {
+        await addTask(task);
+      }
+      if (!cancelled) {
+        setSeeded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tasks, addTask, tasksLoading, seeded]);
+
+  if (!seeded || current.length < tasks.length) {
+    return <Text testID="seed-loading">seeding</Text>;
+  }
 
   return <View />;
+}
+
+function LoginGate({ children }: { children: React.ReactNode }) {
+  const { userId, login } = useAuthContext();
+  const { tasksLoading } = useTasks();
+  const [started, setStarted] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    if (!started) {
+      setStarted(true);
+      void login("user@example.com", "secret");
+    }
+  }, [started, login]);
+
+  useEffect(() => {
+    if (userId && !tasksLoading) {
+      setReady(true);
+    }
+  }, [userId, tasksLoading]);
+
+  if (!ready) {
+    return <Text testID="gate-loading">loading</Text>;
+  }
+
+  return <>{children}</>;
 }
 
 function LoginProbe() {
@@ -87,7 +145,7 @@ function jsonResponse(status: number, body: object) {
   } as Response);
 }
 
-function renderToday(
+async function renderToday(
   seed: Array<{
     title: string;
     timeRequired: string;
@@ -97,15 +155,24 @@ function renderToday(
   onLogout?: () => void,
   onViewMatrix?: () => void
 ) {
-  return render(
+  const result = await render(
     <AuthProvider>
       <TasksProvider>
         <LoginProbe />
-        <SeedTasks tasks={seed} />
-        <TodayScreen onLogout={onLogout} onViewMatrix={onViewMatrix} />
+        <LoginGate>
+          <SeedTasks tasks={seed} />
+          <TodayScreen onLogout={onLogout} onViewMatrix={onViewMatrix} />
+        </LoginGate>
       </TasksProvider>
     </AuthProvider>
   );
+
+  await waitFor(() => {
+    expect(result.queryByTestId("gate-loading")).toBeNull();
+    expect(result.queryByTestId("seed-loading")).toBeNull();
+  });
+
+  return result;
 }
 
 async function completeIntro(
@@ -196,11 +263,57 @@ describe("TodayScreen", () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
-    global.fetch = jest.fn((url: string) => {
+    mockStorage.__reset();
+    createCounter = 0;
+    records.clear();
+    global.fetch = jest.fn((url: string, options?: { method?: string; body?: string }) => {
+      if (typeof url === "string" && url.includes("/login")) {
+        return jsonResponse(200, {
+          message: "Login successful.",
+          user_id: "user-1",
+        });
+      }
       if (typeof url === "string" && url.includes("/timedelta")) {
         return jsonResponse(200, {
           ResultingTimestamp: "2000-01-01T12:30:00.000Z",
         });
+      }
+      if (
+        typeof url === "string" &&
+        url === `${STORAGE_SERVICE_ENDPOINT}/api/v1/storage` &&
+        options?.method === "POST"
+      ) {
+        createCounter += 1;
+        const id = `rec-${createCounter}`;
+        const payload = JSON.parse(options.body as string);
+        records.set(id, payload.data);
+        return jsonResponse(201, { id });
+      }
+      if (
+        typeof url === "string" &&
+        url.startsWith(`${STORAGE_SERVICE_ENDPOINT}/api/v1/storage/`) &&
+        (options?.method === "GET" || options?.method == null)
+      ) {
+        const id = url.split("/").pop()!;
+        const data = records.get(id);
+        if (!data) {
+          return jsonResponse(404, { detail: "not found" });
+        }
+        return jsonResponse(200, {
+          id,
+          client_id: "MobileAppClient",
+          data,
+          metadata: {},
+        });
+      }
+      if (
+        typeof url === "string" &&
+        url.startsWith(`${STORAGE_SERVICE_ENDPOINT}/api/v1/storage/`) &&
+        options?.method === "DELETE"
+      ) {
+        const id = url.split("/").pop()!;
+        records.delete(id);
+        return jsonResponse(200, { message: "deleted" });
       }
       return jsonResponse(500, { error: "Unexpected fetch in test" });
     });
@@ -276,17 +389,21 @@ describe("TodayScreen", () => {
     await fireEvent.press(getByLabelText("Delete"));
     await fireEvent.press(getByText("Yes"));
 
-    expect(queryByText("Call mom")).toBeNull();
+    await waitFor(() => {
+      expect(queryByText("Call mom")).toBeNull();
+    });
     expect(getByText("Task deleted")).toBeTruthy();
     expect(getByText("Undo")).toBeTruthy();
 
     await fireEvent.press(getByText("Undo"));
 
+    await waitFor(() => {
+      expect(getByText("Call mom")).toBeTruthy();
+    });
     expect(queryByText("Task deleted")).toBeNull();
-    expect(getByText("Call mom")).toBeTruthy();
   });
 
-  it("toggles simulated network failure via the header switch", async () => {
+  it("shows ErrorModal when deleting fails due to network failure", async () => {
     const { getByText, getByLabelText, queryByText } = await renderToday([
       {
         title: "Call mom",
@@ -299,15 +416,14 @@ describe("TodayScreen", () => {
     await completeIntro(getByText);
     await fireEvent.press(getByText("Block Time"));
 
-    const failureSwitch = getByLabelText("Simulate network failure");
-    expect(failureSwitch).toBeTruthy();
-
-    await fireEvent(failureSwitch, "valueChange", true);
-
     await fireEvent.press(getByLabelText("Delete"));
+
+    mockStorage.setItem.mockRejectedValueOnce(new Error("disk full"));
     await fireEvent.press(getByText("Yes"));
 
-    expect(getByText("An error occured!")).toBeTruthy();
+    await waitFor(() => {
+      expect(getByText("An error occured!")).toBeTruthy();
+    });
     expect(getByText("Network request failed. Please try again.")).toBeTruthy();
     expect(queryByText("Task deleted")).toBeNull();
 
@@ -339,22 +455,13 @@ describe("TodayScreen", () => {
   });
 
   it("confirming logout clears the userId and navigates back", async () => {
-    (global.fetch as jest.Mock).mockResolvedValue(
-      await jsonResponse(200, {
-        message: "Login successful.",
-        user_id: "u-3",
-      })
-    );
     const onLogout = jest.fn();
     const { getByText, getByTestId, queryByText } = await renderToday(
       [],
       onLogout
     );
 
-    await fireEvent.press(getByText("Login Probe"));
-    await waitFor(() => {
-      expect(getByTestId("auth-user-id").props.children).toBe("u-3");
-    });
+    expect(getByTestId("auth-user-id").props.children).toBe("user-1");
 
     await fireEvent.press(getByText("Logout"));
     await fireEvent.press(getByText("Log out"));
@@ -769,12 +876,57 @@ describe("TodayScreen", () => {
   });
 
   it("rolls back the scheduled task and shows an error when Timedelta fails", async () => {
-    (global.fetch as jest.Mock).mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/timedelta")) {
-        return Promise.reject(new Error("Network error"));
+    (global.fetch as jest.Mock).mockImplementation(
+      (url: string, options?: { method?: string; body?: string }) => {
+        if (typeof url === "string" && url.includes("/login")) {
+          return jsonResponse(200, {
+            message: "Login successful.",
+            user_id: "user-1",
+          });
+        }
+        if (typeof url === "string" && url.includes("/timedelta")) {
+          return Promise.reject(new Error("Network error"));
+        }
+        if (
+          typeof url === "string" &&
+          url === `${STORAGE_SERVICE_ENDPOINT}/api/v1/storage` &&
+          options?.method === "POST"
+        ) {
+          createCounter += 1;
+          const id = `rec-${createCounter}`;
+          const payload = JSON.parse(options.body as string);
+          records.set(id, payload.data);
+          return jsonResponse(201, { id });
+        }
+        if (
+          typeof url === "string" &&
+          url.startsWith(`${STORAGE_SERVICE_ENDPOINT}/api/v1/storage/`) &&
+          (options?.method === "GET" || options?.method == null)
+        ) {
+          const id = url.split("/").pop()!;
+          const data = records.get(id);
+          if (!data) {
+            return jsonResponse(404, { detail: "not found" });
+          }
+          return jsonResponse(200, {
+            id,
+            client_id: "MobileAppClient",
+            data,
+            metadata: {},
+          });
+        }
+        if (
+          typeof url === "string" &&
+          url.startsWith(`${STORAGE_SERVICE_ENDPOINT}/api/v1/storage/`) &&
+          options?.method === "DELETE"
+        ) {
+          const id = url.split("/").pop()!;
+          records.delete(id);
+          return jsonResponse(200, { message: "deleted" });
+        }
+        return jsonResponse(500, { error: "Unexpected fetch in test" });
       }
-      return jsonResponse(500, { error: "Unexpected fetch in test" });
-    });
+    );
 
     const { getByText, getAllByTestId, queryByTestId, queryByText } =
       await renderToday([

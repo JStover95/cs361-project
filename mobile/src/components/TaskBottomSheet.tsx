@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import BottomSheet, {
   BottomSheetFlatList,
   BottomSheetFooter,
@@ -36,7 +36,8 @@ export function TaskBottomSheet({
   onDragMove,
   onDragEnd,
 }: TaskBottomSheetProps) {
-  const { tasks, listTasks, addTask, updateTask, deleteTask } = useTasks();
+  const { tasks, tasksLoading, listTasks, addTask, updateTask, deleteTask } =
+    useTasks();
   const sheetRef = useRef<BottomSheet>(null);
   const [mode, setMode] = useState<SheetMode>("list");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -67,14 +68,16 @@ export function TaskBottomSheet({
     wasHiddenRef.current = hidden;
   }, [hidden]);
 
-  const runAction = useCallback((action: () => void) => {
+  const runAction = useCallback(async (action: () => void | Promise<void>) => {
     try {
-      action();
+      await action();
       setError(null);
       setRetryAction(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
-      setRetryAction(() => () => runAction(action));
+      setRetryAction(() => () => {
+        void runAction(action);
+      });
     }
   }, []);
 
@@ -82,8 +85,8 @@ export function TaskBottomSheet({
     if (mode !== "list") {
       return;
     }
-    runAction(() => setListItems(listTasks()));
-  }, [mode, tasks, listTasks, runAction]);
+    setListItems(listTasks());
+  }, [mode, tasks, listTasks]);
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.id === selectedTaskId) ?? null,
@@ -112,8 +115,8 @@ export function TaskBottomSheet({
       importance: Importance;
       urgency: Urgency;
     }) => {
-      runAction(() => {
-        addTask(values);
+      void runAction(async () => {
+        await addTask(values);
         goToList();
       });
     },
@@ -130,8 +133,8 @@ export function TaskBottomSheet({
       if (!selectedTaskId) {
         return;
       }
-      runAction(() => {
-        updateTask(selectedTaskId, values);
+      void runAction(async () => {
+        await updateTask(selectedTaskId, values);
         goToList();
       });
     },
@@ -153,8 +156,8 @@ export function TaskBottomSheet({
     if (!selectedTaskId) {
       return;
     }
-    runAction(() => {
-      deleteTask(selectedTaskId);
+    void runAction(async () => {
+      await deleteTask(selectedTaskId);
       goToList();
     });
   }, [selectedTaskId, deleteTask, goToList, runAction]);
@@ -266,7 +269,14 @@ export function TaskBottomSheet({
         handleIndicatorStyle={styles.handleIndicator}
         footerComponent={renderFooter}
       >
-        {mode === "list" && (
+        {mode === "list" && tasksLoading && (
+          <BottomSheetView style={styles.loadingContainer}>
+            <Text style={styles.title}>Tasks</Text>
+            <ActivityIndicator testID="tasks-loading-indicator" />
+          </BottomSheetView>
+        )}
+
+        {mode === "list" && !tasksLoading && (
           <BottomSheetFlatList
             data={listItems}
             keyExtractor={(item) => item.id}
@@ -348,6 +358,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 8,
     paddingBottom: 24,
+  },
+  loadingContainer: {
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 24,
+    alignItems: "center",
   },
   title: {
     fontSize: 22,

@@ -3,11 +3,18 @@ import {
   ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { Importance, Task, Urgency } from "../types/task";
+import {
+  createStorageRecord,
+  deleteStorageRecord,
+  getStorageRecord,
+} from "../utils/storageService";
+import { getTaskIdIndex, setTaskIdIndex } from "../utils/taskIndexStorage";
 import { getDurationMinutes } from "../utils/time";
 import { useAuthContext } from "./AuthContext";
 
@@ -24,203 +31,284 @@ type TaskFields = {
   urgency: Urgency;
 };
 
+type StoredTaskData = {
+  userId: string;
+  title: string;
+  timeRequired: string;
+  importance: Importance;
+  urgency: Urgency;
+};
+
 type TasksContextValue = {
   tasks: Task[];
+  tasksLoading: boolean;
   lastDeletedTaskId: string | null;
-  simulateFailure: boolean;
-  setSimulateFailure: (value: boolean) => void;
   listTasks: () => Task[];
-  addTask: (input: TaskFields) => Task;
-  updateTask: (id: string, input: TaskFields) => void;
-  deleteTask: (id: string) => void;
-  undoDelete: () => void;
+  addTask: (input: TaskFields) => Promise<Task>;
+  updateTask: (id: string, input: TaskFields) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
+  undoDelete: () => Promise<void>;
   scheduleTask: (id: string, startMinutes: number) => void;
   unscheduleTask: (id: string) => void;
 };
 
 const TasksContext = createContext<TasksContextValue | null>(null);
 
-let nextId = 1;
-
-function createId(): string {
-  const id = `task-${nextId}`;
-  nextId += 1;
-  return id;
+function sortTasks(tasks: Task[]): Task[] {
+  return [...tasks].sort((a, b) => a.title.localeCompare(b.title));
 }
 
 export function TasksProvider({ children }: { children: ReactNode }) {
   const { userId } = useAuthContext();
-  const [taskMap, setTaskMap] = useState<Map<string, Task>>(() => new Map());
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
   const [lastDeletedTaskId, setLastDeletedTaskId] = useState<string | null>(
     null
   );
-  const [simulateFailure, setSimulateFailure] = useState(false);
-  const taskMapRef = useRef(taskMap);
-  taskMapRef.current = taskMap;
-  const simulateFailureRef = useRef(simulateFailure);
-  simulateFailureRef.current = simulateFailure;
-  const currentUserId = userId ?? "";
-
-  const throwIfSimulatingFailure = useCallback(() => {
-    if (simulateFailureRef.current) {
-      throw new Error(NETWORK_ERROR_MESSAGE);
-    }
-  }, []);
-
-  const tasks = useMemo(
-    () =>
-      Array.from(taskMap.values())
-        .filter((task) => !task.deleted && task.userId === currentUserId)
-        .sort((a, b) => a.title.localeCompare(b.title)),
-    [taskMap, currentUserId]
-  );
-
+  const taskIdIndexRef = useRef<string[]>([]);
+  const lastDeletedTaskRef = useRef<Task | null>(null);
   const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTasksForUser(currentUserId: string) {
+      setTasksLoading(true);
+      setTasks([]);
+      setLastDeletedTaskId(null);
+      lastDeletedTaskRef.current = null;
+
+      try {
+        let ids = await getTaskIdIndex(currentUserId);
+        if (ids == null) {
+          ids = [];
+          await setTaskIdIndex(currentUserId, ids);
+        }
+        if (cancelled) {
+          return;
+        }
+        taskIdIndexRef.current = ids;
+
+        const loaded: Task[] = [];
+        for (const id of ids) {
+          const data = await getStorageRecord<StoredTaskData>(id);
+          if (cancelled) {
+            return;
+          }
+          if (data == null) {
+            console.warn(`Task id ${id} not found in storage service`);
+            continue;
+          }
+          loaded.push({
+            id,
+            userId: data.userId,
+            title: data.title,
+            timeRequired: data.timeRequired,
+            importance: data.importance,
+            urgency: data.urgency,
+          });
+        }
+
+        if (!cancelled) {
+          setTasks(sortTasks(loaded));
+        }
+      } finally {
+        if (!cancelled) {
+          setTasksLoading(false);
+        }
+      }
+    }
+
+    if (userId == null) {
+      setTasks([]);
+      setTasksLoading(false);
+      taskIdIndexRef.current = [];
+      setLastDeletedTaskId(null);
+      lastDeletedTaskRef.current = null;
+      return;
+    }
+
+    loadTasksForUser(userId);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
   const listTasks = useCallback(() => {
-    throwIfSimulatingFailure();
     return tasksRef.current.filter(
       (task) => task.scheduledStartMinutes == null
     );
-  }, [throwIfSimulatingFailure]);
+  }, []);
 
   const addTask = useCallback(
-    (input: TaskFields) => {
-      throwIfSimulatingFailure();
-      const task: Task = {
-        id: createId(),
-        userId: currentUserId,
-        ...input,
-      };
-      setTaskMap((prev) => {
-        const next = new Map(prev);
-        next.set(task.id, task);
-        return next;
-      });
-      return task;
+    async (input: TaskFields): Promise<Task> => {
+      if (userId == null) {
+        throw new Error(NETWORK_ERROR_MESSAGE);
+      }
+      try {
+        const id = await createStorageRecord({
+          userId,
+          ...input,
+        });
+        const task: Task = {
+          id,
+          userId,
+          ...input,
+        };
+        setTasks((prev) => sortTasks([...prev, task]));
+        const nextIds = [...taskIdIndexRef.current, id];
+        taskIdIndexRef.current = nextIds;
+        await setTaskIdIndex(userId, nextIds);
+        return task;
+      } catch {
+        throw new Error(NETWORK_ERROR_MESSAGE);
+      }
     },
-    [throwIfSimulatingFailure, currentUserId]
+    [userId]
   );
 
   const updateTask = useCallback(
-    (id: string, input: TaskFields) => {
-      throwIfSimulatingFailure();
-      setTaskMap((prev) => {
-        const existing = prev.get(id);
-        if (!existing || existing.deleted) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(id, { ...existing, ...input });
-        return next;
-      });
+    async (id: string, input: TaskFields): Promise<void> => {
+      if (userId == null) {
+        throw new Error(NETWORK_ERROR_MESSAGE);
+      }
+      const existing = tasksRef.current.find((task) => task.id === id);
+      if (!existing) {
+        return;
+      }
+
+      let newId: string;
+      try {
+        newId = await createStorageRecord({
+          userId,
+          ...input,
+        });
+      } catch {
+        throw new Error(NETWORK_ERROR_MESSAGE);
+      }
+
+      const newTask: Task = {
+        id: newId,
+        userId,
+        ...input,
+        scheduledStartMinutes: existing.scheduledStartMinutes,
+      };
+
+      setTasks((prev) =>
+        sortTasks([...prev.filter((task) => task.id !== id), newTask])
+      );
+
+      const nextIds = [
+        ...taskIdIndexRef.current.filter((taskId) => taskId !== id),
+        newId,
+      ];
+      taskIdIndexRef.current = nextIds;
+      await setTaskIdIndex(userId, nextIds);
+
+      try {
+        await deleteStorageRecord(id);
+      } catch {
+        console.warn(`Failed to delete old task record ${id} after update`);
+      }
     },
-    [throwIfSimulatingFailure]
+    [userId]
   );
 
   const deleteTask = useCallback(
-    (id: string) => {
-      throwIfSimulatingFailure();
-      const existing = taskMapRef.current.get(id);
-      if (!existing || existing.deleted) {
+    async (id: string): Promise<void> => {
+      if (userId == null) {
+        throw new Error(NETWORK_ERROR_MESSAGE);
+      }
+      const existing = tasksRef.current.find((task) => task.id === id);
+      if (!existing) {
         return;
       }
-      setTaskMap((prev) => {
-        const current = prev.get(id);
-        if (!current || current.deleted) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(id, { ...current, deleted: true });
-        return next;
-      });
+
+      const nextIds = taskIdIndexRef.current.filter((taskId) => taskId !== id);
+      try {
+        await setTaskIdIndex(userId, nextIds);
+      } catch {
+        throw new Error(NETWORK_ERROR_MESSAGE);
+      }
+      taskIdIndexRef.current = nextIds;
+
+      setTasks((prev) => prev.filter((task) => task.id !== id));
+      lastDeletedTaskRef.current = existing;
       setLastDeletedTaskId(id);
+
+      try {
+        await deleteStorageRecord(id);
+      } catch {
+        console.warn(`Failed to delete task record ${id} from storage`);
+      }
     },
-    [throwIfSimulatingFailure]
+    [userId]
   );
 
-  const undoDelete = useCallback(() => {
-    setLastDeletedTaskId((prevId) => {
-      if (!prevId) {
-        return null;
-      }
-      setTaskMap((prev) => {
-        const existing = prev.get(prevId);
-        if (!existing || !existing.deleted) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(prevId, { ...existing, deleted: false });
-        return next;
-      });
-      return null;
+  const undoDelete = useCallback(async () => {
+    const deleted = lastDeletedTaskRef.current;
+    if (!deleted) {
+      return;
+    }
+    lastDeletedTaskRef.current = null;
+    setLastDeletedTaskId(null);
+    await addTask({
+      title: deleted.title,
+      timeRequired: deleted.timeRequired,
+      importance: deleted.importance,
+      urgency: deleted.urgency,
     });
+  }, [addTask]);
+
+  const scheduleTask = useCallback((id: string, startMinutes: number) => {
+    const existing = tasksRef.current.find((task) => task.id === id);
+    if (!existing) {
+      return;
+    }
+
+    const duration = getDurationMinutes(existing.timeRequired);
+    const endMinutes = startMinutes + duration;
+
+    const overlaps = tasksRef.current.some((other) => {
+      if (other.id === id) {
+        return false;
+      }
+      if (other.scheduledStartMinutes == null) {
+        return false;
+      }
+      const otherStart = other.scheduledStartMinutes;
+      const otherEnd = otherStart + getDurationMinutes(other.timeRequired);
+      return startMinutes < otherEnd && otherStart < endMinutes;
+    });
+
+    if (overlaps) {
+      throw new Error(SCHEDULE_OVERLAP_MESSAGE);
+    }
+
+    setTasks((prev) =>
+      prev.map((task) =>
+        task.id === id ? { ...task, scheduledStartMinutes: startMinutes } : task
+      )
+    );
   }, []);
 
-  const scheduleTask = useCallback(
-    (id: string, startMinutes: number) => {
-      throwIfSimulatingFailure();
-      const existing = taskMapRef.current.get(id);
-      if (!existing || existing.deleted) {
-        return;
-      }
-
-      const duration = getDurationMinutes(existing.timeRequired);
-      const endMinutes = startMinutes + duration;
-
-      const overlaps = Array.from(taskMapRef.current.values()).some((other) => {
-        if (other.id === id || other.deleted || other.userId !== currentUserId) {
-          return false;
-        }
-        if (other.scheduledStartMinutes == null) {
-          return false;
-        }
-        const otherStart = other.scheduledStartMinutes;
-        const otherEnd =
-          otherStart + getDurationMinutes(other.timeRequired);
-        return startMinutes < otherEnd && otherStart < endMinutes;
-      });
-
-      if (overlaps) {
-        throw new Error(SCHEDULE_OVERLAP_MESSAGE);
-      }
-
-      setTaskMap((prev) => {
-        const current = prev.get(id);
-        if (!current || current.deleted) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(id, { ...current, scheduledStartMinutes: startMinutes });
-        return next;
-      });
-    },
-    [throwIfSimulatingFailure, currentUserId]
-  );
-
-  const unscheduleTask = useCallback(
-    (id: string) => {
-      throwIfSimulatingFailure();
-      setTaskMap((prev) => {
-        const current = prev.get(id);
-        if (!current || current.deleted || current.scheduledStartMinutes == null) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(id, { ...current, scheduledStartMinutes: null });
-        return next;
-      });
-    },
-    [throwIfSimulatingFailure]
-  );
+  const unscheduleTask = useCallback((id: string) => {
+    setTasks((prev) =>
+      prev.map((task) =>
+        task.id === id && task.scheduledStartMinutes != null
+          ? { ...task, scheduledStartMinutes: null }
+          : task
+      )
+    );
+  }, []);
 
   const value = useMemo(
     () => ({
       tasks,
+      tasksLoading,
       lastDeletedTaskId,
-      simulateFailure,
-      setSimulateFailure,
       listTasks,
       addTask,
       updateTask,
@@ -231,8 +319,8 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     }),
     [
       tasks,
+      tasksLoading,
       lastDeletedTaskId,
-      simulateFailure,
       listTasks,
       addTask,
       updateTask,

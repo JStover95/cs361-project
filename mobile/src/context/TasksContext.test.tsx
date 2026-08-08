@@ -1,5 +1,6 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useState } from "react";
-import { fireEvent, render, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { Pressable, Text, View } from "react-native";
 import { AuthProvider, useAuthContext } from "./AuthContext";
 import {
@@ -8,10 +9,19 @@ import {
   TasksProvider,
   useTasks,
 } from "./TasksContext";
+import { STORAGE_SERVICE_ENDPOINT } from "../utils/constants";
+import { setTaskIdIndex } from "../utils/taskIndexStorage";
+
+type AsyncStorageMock = typeof AsyncStorage & {
+  __reset: () => void;
+};
+
+const mockStorage = AsyncStorage as AsyncStorageMock;
 
 function TasksProbe() {
   const {
     tasks,
+    tasksLoading,
     lastDeletedTaskId,
     addTask,
     updateTask,
@@ -24,9 +34,9 @@ function TasksProbe() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [listedCount, setListedCount] = useState<number | null>(null);
 
-  const run = (action: () => void) => {
+  const run = async (action: () => void | Promise<void>) => {
     try {
-      action();
+      await action();
       setActionError(null);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "error");
@@ -36,6 +46,7 @@ function TasksProbe() {
   return (
     <View>
       <Text testID="task-count">{tasks.length}</Text>
+      <Text testID="tasks-loading">{tasksLoading ? "yes" : "no"}</Text>
       <Text testID="last-deleted">{lastDeletedTaskId ?? "none"}</Text>
       <Text testID="action-error">{actionError ?? "none"}</Text>
       <Text testID="listed-count">
@@ -44,18 +55,20 @@ function TasksProbe() {
       {tasks.map((task) => (
         <Text key={task.id} testID={`task-${task.id}`}>
           {task.title}|{task.timeRequired}|{task.importance}|{task.urgency}|
-          {task.scheduledStartMinutes ?? "unscheduled"}
+          {task.scheduledStartMinutes ?? "unscheduled"}|{task.userId}
         </Text>
       ))}
       <Pressable
         accessibilityRole="button"
         onPress={() =>
-          addTask({
-            title: "Zebra",
-            timeRequired: "1h",
-            importance: "High",
-            urgency: "Low",
-          })
+          run(() =>
+            addTask({
+              title: "Zebra",
+              timeRequired: "1h",
+              importance: "High",
+              urgency: "Low",
+            })
+          )
         }
       >
         <Text>Add Zebra</Text>
@@ -63,55 +76,66 @@ function TasksProbe() {
       <Pressable
         accessibilityRole="button"
         onPress={() =>
-          addTask({
-            title: "Apple",
-            timeRequired: "30m",
-            importance: "Low",
-            urgency: "High",
-          })
+          run(() =>
+            addTask({
+              title: "Apple",
+              timeRequired: "30m",
+              importance: "Low",
+              urgency: "High",
+            })
+          )
         }
       >
         <Text>Add Apple</Text>
       </Pressable>
       <Pressable
         accessibilityRole="button"
-        onPress={() => {
-          const first = tasks[0];
-          if (first) {
-            updateTask(first.id, {
-              title: "Updated",
-              timeRequired: "2h",
-              importance: "High",
-              urgency: "High",
-            });
-          }
-        }}
+        onPress={() =>
+          run(async () => {
+            const first = tasks[0];
+            if (first) {
+              await updateTask(first.id, {
+                title: "Updated",
+                timeRequired: "2h",
+                importance: "High",
+                urgency: "High",
+              });
+            }
+          })
+        }
       >
         <Text>Update First</Text>
       </Pressable>
       <Pressable
         accessibilityRole="button"
-        onPress={() => {
-          const first = tasks[0];
-          if (first) {
-            deleteTask(first.id);
-          }
-        }}
+        onPress={() =>
+          run(async () => {
+            const first = tasks[0];
+            if (first) {
+              await deleteTask(first.id);
+            }
+          })
+        }
       >
         <Text>Delete First</Text>
       </Pressable>
       <Pressable
         accessibilityRole="button"
-        onPress={() => {
-          const second = tasks[1];
-          if (second) {
-            deleteTask(second.id);
-          }
-        }}
+        onPress={() =>
+          run(async () => {
+            const second = tasks[1];
+            if (second) {
+              await deleteTask(second.id);
+            }
+          })
+        }
       >
         <Text>Delete Second</Text>
       </Pressable>
-      <Pressable accessibilityRole="button" onPress={undoDelete}>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => run(() => undoDelete())}
+      >
         <Text>Undo Delete</Text>
       </Pressable>
       <Pressable
@@ -180,143 +204,16 @@ function TasksProbe() {
   );
 }
 
-function FailureProbe() {
-  const {
-    tasks,
-    simulateFailure,
-    setSimulateFailure,
-    listTasks,
-    addTask,
-    updateTask,
-    deleteTask,
-    scheduleTask,
-    unscheduleTask,
-  } = useTasks();
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  const run = (action: () => void) => {
-    try {
-      action();
-      setActionError(null);
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : "error");
-    }
-  };
-
-  return (
-    <View>
-      <Text testID="task-count">{tasks.length}</Text>
-      <Text testID="simulate-failure">{simulateFailure ? "on" : "off"}</Text>
-      <Text testID="action-error">{actionError ?? "none"}</Text>
-      {tasks.map((task) => (
-        <Text key={task.id} testID={`task-${task.id}`}>
-          {task.title}|{task.timeRequired}|{task.importance}|{task.urgency}|
-          {task.scheduledStartMinutes ?? "unscheduled"}
-        </Text>
-      ))}
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => setSimulateFailure(true)}
-      >
-        <Text>Enable Failure</Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => setSimulateFailure(false)}
-      >
-        <Text>Disable Failure</Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() =>
-          run(() =>
-            addTask({
-              title: "Apple",
-              timeRequired: "30m",
-              importance: "Low",
-              urgency: "High",
-            })
-          )
-        }
-      >
-        <Text>Add Apple</Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() =>
-          run(() => {
-            const first = tasks[0];
-            if (first) {
-              updateTask(first.id, {
-                title: "Updated",
-                timeRequired: "2h",
-                importance: "High",
-                urgency: "High",
-              });
-            }
-          })
-        }
-      >
-        <Text>Update First</Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() =>
-          run(() => {
-            const first = tasks[0];
-            if (first) {
-              deleteTask(first.id);
-            }
-          })
-        }
-      >
-        <Text>Delete First</Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => run(() => listTasks())}
-      >
-        <Text>List Tasks</Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() =>
-          run(() => {
-            const first = tasks[0];
-            if (first) {
-              scheduleTask(first.id, 10 * 60);
-            }
-          })
-        }
-      >
-        <Text>Schedule First</Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() =>
-          run(() => {
-            const first = tasks[0];
-            if (first) {
-              unscheduleTask(first.id);
-            }
-          })
-        }
-      >
-        <Text>Unschedule First</Text>
-      </Pressable>
-    </View>
-  );
-}
-
 function ScopedProbe() {
   const { userId, login } = useAuthContext();
-  const { tasks, addTask } = useTasks();
+  const { tasks, tasksLoading, addTask } = useTasks();
   const [lastAddedUserId, setLastAddedUserId] = useState<string | null>(null);
 
   return (
     <View>
       <Text testID="auth-user-id">{userId ?? "null"}</Text>
       <Text testID="task-count">{tasks.length}</Text>
+      <Text testID="tasks-loading">{tasksLoading ? "yes" : "no"}</Text>
       <Text testID="last-added-user-id">{lastAddedUserId ?? "null"}</Text>
       {tasks.map((task) => (
         <Text key={task.id} testID={`task-${task.id}`}>
@@ -337,29 +234,27 @@ function ScopedProbe() {
       </Pressable>
       <Pressable
         accessibilityRole="button"
-        onPress={() => {
-          const task = addTask({
+        onPress={() =>
+          addTask({
             title: "Task A",
             timeRequired: "30m",
             importance: "High",
             urgency: "High",
-          });
-          setLastAddedUserId(task.userId);
-        }}
+          }).then((task) => setLastAddedUserId(task.userId))
+        }
       >
         <Text>Add Task A</Text>
       </Pressable>
       <Pressable
         accessibilityRole="button"
-        onPress={() => {
-          const task = addTask({
+        onPress={() =>
+          addTask({
             title: "Task B",
             timeRequired: "1h",
             importance: "Low",
             urgency: "Low",
-          });
-          setLastAddedUserId(task.userId);
-        }}
+          }).then((task) => setLastAddedUserId(task.userId))
+        }
       >
         <Text>Add Task B</Text>
       </Pressable>
@@ -367,10 +262,29 @@ function ScopedProbe() {
   );
 }
 
+function LoginAndProbe({ children }: { children: React.ReactNode }) {
+  const { userId, login } = useAuthContext();
+
+  return (
+    <View>
+      <Text testID="auth-user-id">{userId ?? "null"}</Text>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => login("user@example.com", "secret")}
+      >
+        <Text>Login</Text>
+      </Pressable>
+      {children}
+    </View>
+  );
+}
+
 function renderWithProviders(ui: React.ReactElement) {
   return render(
     <AuthProvider>
-      <TasksProvider>{ui}</TasksProvider>
+      <TasksProvider>
+        <LoginAndProbe>{ui}</LoginAndProbe>
+      </TasksProvider>
     </AuthProvider>
   );
 }
@@ -383,9 +297,230 @@ function jsonResponse(status: number, body: object) {
   } as Response);
 }
 
-describe("TasksContext", () => {
-  it("starts with an empty task list", async () => {
-    const { getByTestId } = await renderWithProviders(<TasksProbe />);
+let createCounter = 0;
+
+function mockAuthAndStorage() {
+  createCounter = 0;
+  (global.fetch as jest.Mock).mockImplementation((url: string, options?: { method?: string; body?: string }) => {
+    if (typeof url === "string" && url.includes("/login")) {
+      return jsonResponse(200, {
+        message: "Login successful.",
+        user_id: "user-1",
+      });
+    }
+    if (typeof url === "string" && url.includes("/register")) {
+      return jsonResponse(200, {
+        message: "Registration successful.",
+        user_id: "user-1",
+      });
+    }
+    if (
+      typeof url === "string" &&
+      url === `${STORAGE_SERVICE_ENDPOINT}/api/v1/storage` &&
+      options?.method === "POST"
+    ) {
+      createCounter += 1;
+      return jsonResponse(201, { id: `rec-${createCounter}` });
+    }
+    if (
+      typeof url === "string" &&
+      url.startsWith(`${STORAGE_SERVICE_ENDPOINT}/api/v1/storage/`) &&
+      (options?.method === "GET" || options?.method == null)
+    ) {
+      return jsonResponse(404, { detail: "Record not found or access denied." });
+    }
+    if (
+      typeof url === "string" &&
+      url.startsWith(`${STORAGE_SERVICE_ENDPOINT}/api/v1/storage/`) &&
+      options?.method === "DELETE"
+    ) {
+      return jsonResponse(200, { message: "deleted" });
+    }
+    return jsonResponse(404, { error: "not found" });
+  });
+}
+
+async function loginAsUser(
+  getByText: (text: string | RegExp) => ReturnType<
+    Awaited<ReturnType<typeof renderWithProviders>>["getByText"]
+  >,
+  getByTestId: (id: string) => ReturnType<
+    Awaited<ReturnType<typeof renderWithProviders>>["getByTestId"]
+  >
+) {
+  await fireEvent.press(getByText("Login"));
+  await waitFor(() => {
+    expect(getByTestId("auth-user-id").props.children).toBe("user-1");
+  });
+  await waitFor(() => {
+    expect(getByTestId("tasks-loading").props.children).toBe("no");
+  });
+}
+
+describe("TasksContext initialization", () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    global.fetch = jest.fn();
+    mockStorage.__reset();
+    mockAuthAndStorage();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    jest.restoreAllMocks();
+  });
+
+  it("creates an empty task id index when none exists and finishes loading", async () => {
+    const { getByText, getByTestId } = await renderWithProviders(
+      <TasksProbe />
+    );
+
+    await loginAsUser(getByText, getByTestId);
+
+    expect(getByTestId("task-count").props.children).toBe(0);
+    expect(getByTestId("tasks-loading").props.children).toBe("no");
+    expect(await mockStorage.getItem("task-ids:user-1")).toBe(
+      JSON.stringify([])
+    );
+  });
+
+  it("loads existing task ids sequentially and stores retrieved tasks", async () => {
+    await setTaskIdIndex("user-1", ["id-a", "id-b"]);
+
+    const getOrder: string[] = [];
+    (global.fetch as jest.Mock).mockImplementation(
+      (url: string, options?: { method?: string }) => {
+        if (typeof url === "string" && url.includes("/login")) {
+          return jsonResponse(200, {
+            message: "Login successful.",
+            user_id: "user-1",
+          });
+        }
+        if (
+          typeof url === "string" &&
+          url.includes(`${STORAGE_SERVICE_ENDPOINT}/api/v1/storage/`) &&
+          (options?.method === "GET" || options?.method == null)
+        ) {
+          const id = url.split("/").pop()!;
+          getOrder.push(id);
+          if (id === "id-a") {
+            return jsonResponse(200, {
+              id: "id-a",
+              client_id: "MobileAppClient",
+              data: {
+                userId: "user-1",
+                title: "Apple",
+                timeRequired: "30m",
+                importance: "Low",
+                urgency: "High",
+              },
+              metadata: {},
+            });
+          }
+          if (id === "id-b") {
+            return jsonResponse(200, {
+              id: "id-b",
+              client_id: "MobileAppClient",
+              data: {
+                userId: "user-1",
+                title: "Zebra",
+                timeRequired: "1h",
+                importance: "High",
+                urgency: "Low",
+              },
+              metadata: {},
+            });
+          }
+          return jsonResponse(404, { detail: "not found" });
+        }
+        return jsonResponse(404, {});
+      }
+    );
+
+    const { getByText, getByTestId } = await renderWithProviders(
+      <TasksProbe />
+    );
+
+    await loginAsUser(getByText, getByTestId);
+
+    expect(getOrder).toEqual(["id-a", "id-b"]);
+    expect(getByTestId("task-count").props.children).toBe(2);
+    expect(getByText(/Apple\|30m\|Low\|High/)).toBeTruthy();
+    expect(getByText(/Zebra\|1h\|High\|Low/)).toBeTruthy();
+  });
+
+  it("warns and continues when a task id is not found", async () => {
+    await setTaskIdIndex("user-1", ["missing", "id-b"]);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    (global.fetch as jest.Mock).mockImplementation(
+      (url: string, options?: { method?: string }) => {
+        if (typeof url === "string" && url.includes("/login")) {
+          return jsonResponse(200, {
+            message: "Login successful.",
+            user_id: "user-1",
+          });
+        }
+        if (
+          typeof url === "string" &&
+          url.includes(`${STORAGE_SERVICE_ENDPOINT}/api/v1/storage/`) &&
+          (options?.method === "GET" || options?.method == null)
+        ) {
+          const id = url.split("/").pop()!;
+          if (id === "id-b") {
+            return jsonResponse(200, {
+              id: "id-b",
+              client_id: "MobileAppClient",
+              data: {
+                userId: "user-1",
+                title: "Zebra",
+                timeRequired: "1h",
+                importance: "High",
+                urgency: "Low",
+              },
+              metadata: {},
+            });
+          }
+          return jsonResponse(404, { detail: "not found" });
+        }
+        return jsonResponse(404, {});
+      }
+    );
+
+    const { getByText, getByTestId } = await renderWithProviders(
+      <TasksProbe />
+    );
+
+    await loginAsUser(getByText, getByTestId);
+
+    expect(getByTestId("task-count").props.children).toBe(1);
+    expect(getByText(/Zebra\|1h\|High\|Low/)).toBeTruthy();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+});
+
+describe("TasksContext CRUD", () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    global.fetch = jest.fn();
+    mockStorage.__reset();
+    mockAuthAndStorage();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    jest.restoreAllMocks();
+  });
+
+  it("starts with an empty task list after login", async () => {
+    const { getByText, getByTestId } = await renderWithProviders(
+      <TasksProbe />
+    );
+
+    await loginAsUser(getByText, getByTestId);
 
     expect(getByTestId("task-count").props.children).toBe(0);
     expect(getByTestId("last-deleted").props.children).toBe("none");
@@ -396,54 +531,158 @@ describe("TasksContext", () => {
       <TasksProbe />
     );
 
-    await fireEvent.press(getByText("Add Zebra"));
-    await fireEvent.press(getByText("Add Apple"));
+    await loginAsUser(getByText, getByTestId);
 
-    expect(getByTestId("task-count").props.children).toBe(2);
-    const rendered = getAllByTestId(/^task-task-/).map(
+    await act(async () => {
+      await fireEvent.press(getByText("Add Zebra"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(1);
+    });
+    await act(async () => {
+      await fireEvent.press(getByText("Add Apple"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(2);
+    });
+
+    const rendered = getAllByTestId(/^task-rec-/).map(
       (node) => node.props.children
     );
     expect(rendered[0]).toContain("Apple");
     expect(rendered[1]).toContain("Zebra");
+    expect(await mockStorage.getItem("task-ids:user-1")).toBe(
+      JSON.stringify(["rec-1", "rec-2"])
+    );
   });
 
-  it("updates and deletes tasks", async () => {
+  it("throws NETWORK_ERROR_MESSAGE when create fails and does not add the task", async () => {
+    (global.fetch as jest.Mock).mockImplementation(
+      (url: string, options?: { method?: string }) => {
+        if (typeof url === "string" && url.includes("/login")) {
+          return jsonResponse(200, {
+            message: "Login successful.",
+            user_id: "user-1",
+          });
+        }
+        if (
+          typeof url === "string" &&
+          url === `${STORAGE_SERVICE_ENDPOINT}/api/v1/storage` &&
+          options?.method === "POST"
+        ) {
+          return jsonResponse(500, { detail: "fail" });
+        }
+        return jsonResponse(404, {});
+      }
+    );
+
+    const { getByText, getByTestId } = await renderWithProviders(
+      <TasksProbe />
+    );
+
+    await loginAsUser(getByText, getByTestId);
+
+    await act(async () => {
+      await fireEvent.press(getByText("Add Apple"));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId("action-error").props.children).toBe(
+        NETWORK_ERROR_MESSAGE
+      );
+    });
+    expect(getByTestId("task-count").props.children).toBe(0);
+  });
+
+  it("updates a task by creating a new record and swapping atomically", async () => {
     const { getByText, getByTestId, queryByText } = await renderWithProviders(
       <TasksProbe />
     );
 
-    await fireEvent.press(getByText("Add Apple"));
-    await fireEvent.press(getByText("Update First"));
+    await loginAsUser(getByText, getByTestId);
 
-    expect(getByText(/Updated\|2h\|High\|High/)).toBeTruthy();
+    await act(async () => {
+      await fireEvent.press(getByText("Add Apple"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(1);
+    });
 
-    await fireEvent.press(getByText("Delete First"));
+    await act(async () => {
+      await fireEvent.press(getByText("Update First"));
+    });
 
-    expect(getByTestId("task-count").props.children).toBe(0);
-    expect(queryByText(/Updated\|2h\|High\|High/)).toBeNull();
-  });
-
-  it("tracks lastDeletedTaskId after delete and restores on undo", async () => {
-    const { getByText, getByTestId, queryByText } = await renderWithProviders(
-      <TasksProbe />
-    );
-
-    await fireEvent.press(getByText("Add Apple"));
-
-    expect(getByTestId("last-deleted").props.children).toBe("none");
-
-    const appleNode = getByText(/Apple\|30m\|Low\|High/);
-    const appleId = appleNode.props.testID.replace("task-", "");
-
-    await fireEvent.press(getByText("Delete First"));
-
-    expect(getByTestId("task-count").props.children).toBe(0);
-    expect(getByTestId("last-deleted").props.children).toBe(appleId);
+    await waitFor(() => {
+      expect(getByText(/Updated\|2h\|High\|High/)).toBeTruthy();
+    });
     expect(queryByText(/Apple\|30m\|Low\|High/)).toBeNull();
-
-    await fireEvent.press(getByText("Undo Delete"));
-
     expect(getByTestId("task-count").props.children).toBe(1);
+    expect(await mockStorage.getItem("task-ids:user-1")).toBe(
+      JSON.stringify(["rec-2"])
+    );
+  });
+
+  it("deletes a task, updates the index, and tracks lastDeletedTaskId", async () => {
+    const { getByText, getByTestId, queryByText } = await renderWithProviders(
+      <TasksProbe />
+    );
+
+    await loginAsUser(getByText, getByTestId);
+
+    await act(async () => {
+      await fireEvent.press(getByText("Add Apple"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(1);
+    });
+
+    const appleId = getByText(/Apple\|30m\|Low\|High/).props.testID.replace(
+      "task-",
+      ""
+    );
+
+    await act(async () => {
+      await fireEvent.press(getByText("Delete First"));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(0);
+    });
+    expect(queryByText(/Apple\|30m\|Low\|High/)).toBeNull();
+    expect(getByTestId("last-deleted").props.children).toBe(appleId);
+    expect(await mockStorage.getItem("task-ids:user-1")).toBe(
+      JSON.stringify([])
+    );
+  });
+
+  it("restores a deleted task via undoDelete by creating a new record", async () => {
+    const { getByText, getByTestId } = await renderWithProviders(
+      <TasksProbe />
+    );
+
+    await loginAsUser(getByText, getByTestId);
+
+    await act(async () => {
+      await fireEvent.press(getByText("Add Apple"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(1);
+    });
+
+    await act(async () => {
+      await fireEvent.press(getByText("Delete First"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(0);
+    });
+
+    await act(async () => {
+      await fireEvent.press(getByText("Undo Delete"));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(1);
+    });
     expect(getByTestId("last-deleted").props.children).toBe("none");
     expect(getByText(/Apple\|30m\|Low\|High/)).toBeTruthy();
   });
@@ -453,47 +692,91 @@ describe("TasksContext", () => {
       <TasksProbe />
     );
 
-    await fireEvent.press(getByText("Add Apple"));
-    await fireEvent.press(getByText("Add Zebra"));
+    await loginAsUser(getByText, getByTestId);
 
-    await fireEvent.press(getByText("Delete First"));
+    await act(async () => {
+      await fireEvent.press(getByText("Add Apple"));
+    });
+    await act(async () => {
+      await fireEvent.press(getByText("Add Zebra"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(2);
+    });
 
-    expect(queryByText(/Apple\|30m\|Low\|High/)).toBeNull();
-    expect(getByText(/Zebra\|1h\|High\|Low/)).toBeTruthy();
+    await act(async () => {
+      await fireEvent.press(getByText("Delete First"));
+    });
+    await waitFor(() => {
+      expect(queryByText(/Apple\|30m\|Low\|High/)).toBeNull();
+    });
     const firstDeletedId = getByTestId("last-deleted").props.children;
 
-    await fireEvent.press(getByText("Delete First"));
-
-    expect(getByTestId("task-count").props.children).toBe(0);
+    await act(async () => {
+      await fireEvent.press(getByText("Delete First"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(0);
+    });
     expect(getByTestId("last-deleted").props.children).not.toBe(firstDeletedId);
-    expect(queryByText(/Zebra\|1h\|High\|Low/)).toBeNull();
 
-    await fireEvent.press(getByText("Undo Delete"));
-
-    expect(getByTestId("task-count").props.children).toBe(1);
+    await act(async () => {
+      await fireEvent.press(getByText("Undo Delete"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(1);
+    });
     expect(getByText(/Zebra\|1h\|High\|Low/)).toBeTruthy();
     expect(queryByText(/Apple\|30m\|Low\|High/)).toBeNull();
   });
 
   it("schedules a task at the given start minutes", async () => {
-    const { getByText, getByTestId } = await renderWithProviders(<TasksProbe />);
+    const { getByText, getByTestId } = await renderWithProviders(
+      <TasksProbe />
+    );
 
-    await fireEvent.press(getByText("Add Apple"));
-    await fireEvent.press(getByText("Schedule Apple 11:30"));
+    await loginAsUser(getByText, getByTestId);
+
+    await act(async () => {
+      await fireEvent.press(getByText("Add Apple"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(1);
+    });
+
+    await act(async () => {
+      await fireEvent.press(getByText("Schedule Apple 11:30"));
+    });
 
     expect(getByTestId("action-error").props.children).toBe("none");
     expect(getByText(/Apple\|30m\|Low\|High\|690/)).toBeTruthy();
   });
 
   it("throws on overlap and leaves the overlapping task unscheduled", async () => {
-    const { getByText, getByTestId } = await renderWithProviders(<TasksProbe />);
+    const { getByText, getByTestId } = await renderWithProviders(
+      <TasksProbe />
+    );
 
-    await fireEvent.press(getByText("Add Apple"));
-    await fireEvent.press(getByText("Add Zebra"));
-    await fireEvent.press(getByText("Schedule Apple 11:30"));
+    await loginAsUser(getByText, getByTestId);
+
+    await act(async () => {
+      await fireEvent.press(getByText("Add Apple"));
+    });
+    await act(async () => {
+      await fireEvent.press(getByText("Add Zebra"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(2);
+    });
+
+    await act(async () => {
+      await fireEvent.press(getByText("Schedule Apple 11:30"));
+    });
     expect(getByText(/Apple\|30m\|Low\|High\|690/)).toBeTruthy();
 
-    await fireEvent.press(getByText("Schedule Zebra 11:00"));
+    await act(async () => {
+      await fireEvent.press(getByText("Schedule Zebra 11:00"));
+    });
 
     expect(getByTestId("action-error").props.children).toBe(
       SCHEDULE_OVERLAP_MESSAGE
@@ -502,12 +785,28 @@ describe("TasksContext", () => {
   });
 
   it("schedules non-overlapping tasks successfully", async () => {
-    const { getByText, getByTestId } = await renderWithProviders(<TasksProbe />);
+    const { getByText, getByTestId } = await renderWithProviders(
+      <TasksProbe />
+    );
 
-    await fireEvent.press(getByText("Add Apple"));
-    await fireEvent.press(getByText("Add Zebra"));
-    await fireEvent.press(getByText("Schedule Apple 11:30"));
-    await fireEvent.press(getByText("Schedule Zebra 14:00"));
+    await loginAsUser(getByText, getByTestId);
+
+    await act(async () => {
+      await fireEvent.press(getByText("Add Apple"));
+    });
+    await act(async () => {
+      await fireEvent.press(getByText("Add Zebra"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(2);
+    });
+
+    await act(async () => {
+      await fireEvent.press(getByText("Schedule Apple 11:30"));
+    });
+    await act(async () => {
+      await fireEvent.press(getByText("Schedule Zebra 14:00"));
+    });
 
     expect(getByTestId("action-error").props.children).toBe("none");
     expect(getByText(/Apple\|30m\|Low\|High\|690/)).toBeTruthy();
@@ -515,102 +814,66 @@ describe("TasksContext", () => {
   });
 
   it("excludes scheduled tasks from listTasks", async () => {
-    const { getByText, getByTestId } = await renderWithProviders(<TasksProbe />);
+    const { getByText, getByTestId } = await renderWithProviders(
+      <TasksProbe />
+    );
 
-    await fireEvent.press(getByText("Add Apple"));
-    await fireEvent.press(getByText("Add Zebra"));
-    await fireEvent.press(getByText("List Unscheduled"));
+    await loginAsUser(getByText, getByTestId);
+
+    await act(async () => {
+      await fireEvent.press(getByText("Add Apple"));
+    });
+    await act(async () => {
+      await fireEvent.press(getByText("Add Zebra"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(2);
+    });
+
+    await act(async () => {
+      await fireEvent.press(getByText("List Unscheduled"));
+    });
     expect(getByTestId("listed-count").props.children).toBe(2);
 
-    await fireEvent.press(getByText("Schedule Apple 11:30"));
-    await fireEvent.press(getByText("List Unscheduled"));
+    await act(async () => {
+      await fireEvent.press(getByText("Schedule Apple 11:30"));
+    });
+    await act(async () => {
+      await fireEvent.press(getByText("List Unscheduled"));
+    });
     expect(getByTestId("listed-count").props.children).toBe(1);
     expect(getByTestId("task-count").props.children).toBe(2);
   });
 
   it("unschedules a task and returns it to the unscheduled list", async () => {
-    const { getByText, getByTestId } = await renderWithProviders(<TasksProbe />);
+    const { getByText, getByTestId } = await renderWithProviders(
+      <TasksProbe />
+    );
 
-    await fireEvent.press(getByText("Add Apple"));
-    await fireEvent.press(getByText("Schedule Apple 11:30"));
+    await loginAsUser(getByText, getByTestId);
+
+    await act(async () => {
+      await fireEvent.press(getByText("Add Apple"));
+    });
+    await waitFor(() => {
+      expect(getByTestId("task-count").props.children).toBe(1);
+    });
+
+    await act(async () => {
+      await fireEvent.press(getByText("Schedule Apple 11:30"));
+    });
     expect(getByText(/Apple\|30m\|Low\|High\|690/)).toBeTruthy();
 
-    await fireEvent.press(getByText("Unschedule Apple"));
+    await act(async () => {
+      await fireEvent.press(getByText("Unschedule Apple"));
+    });
 
     expect(getByTestId("action-error").props.children).toBe("none");
     expect(getByText(/Apple\|30m\|Low\|High\|unscheduled/)).toBeTruthy();
-    await fireEvent.press(getByText("List Unscheduled"));
+    await act(async () => {
+      await fireEvent.press(getByText("List Unscheduled"));
+    });
     expect(getByTestId("listed-count").props.children).toBe(1);
-  });
-
-  it("throws on add, update, delete, list, and schedule when simulateFailure is enabled", async () => {
-    const { getByText, getByTestId } = await renderWithProviders(
-      <FailureProbe />
-    );
-
-    await fireEvent.press(getByText("Add Apple"));
-    expect(getByTestId("task-count").props.children).toBe(1);
-    expect(getByTestId("action-error").props.children).toBe("none");
-
-    await fireEvent.press(getByText("Enable Failure"));
-    expect(getByTestId("simulate-failure").props.children).toBe("on");
-
-    await fireEvent.press(getByText("Add Apple"));
-    expect(getByTestId("action-error").props.children).toBe(
-      NETWORK_ERROR_MESSAGE
-    );
-    expect(getByTestId("task-count").props.children).toBe(1);
-
-    await fireEvent.press(getByText("Update First"));
-    expect(getByTestId("action-error").props.children).toBe(
-      NETWORK_ERROR_MESSAGE
-    );
-    expect(getByText(/Apple\|30m\|Low\|High/)).toBeTruthy();
-
-    await fireEvent.press(getByText("Delete First"));
-    expect(getByTestId("action-error").props.children).toBe(
-      NETWORK_ERROR_MESSAGE
-    );
-    expect(getByTestId("task-count").props.children).toBe(1);
-
-    await fireEvent.press(getByText("List Tasks"));
-    expect(getByTestId("action-error").props.children).toBe(
-      NETWORK_ERROR_MESSAGE
-    );
-
-    await fireEvent.press(getByText("Schedule First"));
-    expect(getByTestId("action-error").props.children).toBe(
-      NETWORK_ERROR_MESSAGE
-    );
-    expect(getByText(/Apple\|30m\|Low\|High\|unscheduled/)).toBeTruthy();
-
-    await fireEvent.press(getByText("Disable Failure"));
-    expect(getByTestId("simulate-failure").props.children).toBe("off");
-
-    await fireEvent.press(getByText("List Tasks"));
-    expect(getByTestId("action-error").props.children).toBe("none");
-
-    await fireEvent.press(getByText("Update First"));
-    expect(getByTestId("action-error").props.children).toBe("none");
-    expect(getByText(/Updated\|2h\|High\|High/)).toBeTruthy();
-  });
-
-  it("throws on unschedule when simulateFailure is enabled and leaves the task scheduled", async () => {
-    const { getByText, getByTestId } = await renderWithProviders(
-      <FailureProbe />
-    );
-
-    await fireEvent.press(getByText("Add Apple"));
-    await fireEvent.press(getByText("Schedule First"));
-    expect(getByText(/Apple\|30m\|Low\|High\|600/)).toBeTruthy();
-
-    await fireEvent.press(getByText("Enable Failure"));
-    await fireEvent.press(getByText("Unschedule First"));
-
-    expect(getByTestId("action-error").props.children).toBe(
-      NETWORK_ERROR_MESSAGE
-    );
-    expect(getByText(/Apple\|30m\|Low\|High\|600/)).toBeTruthy();
   });
 });
 
@@ -619,6 +882,8 @@ describe("TasksContext per-user scoping", () => {
 
   beforeEach(() => {
     global.fetch = jest.fn();
+    mockStorage.__reset();
+    createCounter = 0;
   });
 
   afterEach(() => {
@@ -627,69 +892,159 @@ describe("TasksContext per-user scoping", () => {
   });
 
   it("stamps addTask with the logged-in user's id", async () => {
-    (global.fetch as jest.Mock).mockResolvedValue(
-      await jsonResponse(200, {
-        message: "Login successful.",
-        user_id: "user-a",
-      })
+    (global.fetch as jest.Mock).mockImplementation(
+      (url: string, options?: { method?: string }) => {
+        if (typeof url === "string" && url.includes("/login")) {
+          return jsonResponse(200, {
+            message: "Login successful.",
+            user_id: "user-a",
+          });
+        }
+        if (
+          typeof url === "string" &&
+          url === `${STORAGE_SERVICE_ENDPOINT}/api/v1/storage` &&
+          options?.method === "POST"
+        ) {
+          createCounter += 1;
+          return jsonResponse(201, { id: `rec-${createCounter}` });
+        }
+        return jsonResponse(404, {});
+      }
     );
 
-    const { getByText, getByTestId } = await renderWithProviders(
-      <ScopedProbe />
+    const { getByText, getByTestId } = await render(
+      <AuthProvider>
+        <TasksProvider>
+          <ScopedProbe />
+        </TasksProvider>
+      </AuthProvider>
     );
 
     await fireEvent.press(getByText("Login A"));
     await waitFor(() => {
       expect(getByTestId("auth-user-id").props.children).toBe("user-a");
     });
+    await waitFor(() => {
+      expect(getByTestId("tasks-loading").props.children).toBe("no");
+    });
 
-    await fireEvent.press(getByText("Add Task A"));
+    await act(async () => {
+      await fireEvent.press(getByText("Add Task A"));
+    });
 
-    expect(getByTestId("last-added-user-id").props.children).toBe("user-a");
+    await waitFor(() => {
+      expect(getByTestId("last-added-user-id").props.children).toBe("user-a");
+    });
     expect(getByText(/Task A\|user-a/)).toBeTruthy();
   });
 
   it("filters tasks to only those belonging to the logged-in user", async () => {
-    (global.fetch as jest.Mock).mockImplementation((_url: string, options) => {
-      const body = JSON.parse(options.body as string);
-      if (body.email === "a@example.com") {
-        return jsonResponse(200, {
-          message: "Login successful.",
-          user_id: "user-a",
-        });
-      }
-      return jsonResponse(200, {
-        message: "Login successful.",
-        user_id: "user-b",
-      });
-    });
+    const records = new Map<string, Record<string, unknown>>();
 
-    const { getByText, getByTestId, queryByText } = await renderWithProviders(
-      <ScopedProbe />
+    (global.fetch as jest.Mock).mockImplementation(
+      (url: string, options?: { method?: string; body?: string }) => {
+        if (typeof url === "string" && url.includes("/login")) {
+          const body = JSON.parse(options?.body as string);
+          if (body.email === "a@example.com") {
+            return jsonResponse(200, {
+              message: "Login successful.",
+              user_id: "user-a",
+            });
+          }
+          return jsonResponse(200, {
+            message: "Login successful.",
+            user_id: "user-b",
+          });
+        }
+        if (
+          typeof url === "string" &&
+          url === `${STORAGE_SERVICE_ENDPOINT}/api/v1/storage` &&
+          options?.method === "POST"
+        ) {
+          createCounter += 1;
+          const id = `rec-${createCounter}`;
+          const payload = JSON.parse(options.body as string);
+          records.set(id, payload.data);
+          return jsonResponse(201, { id });
+        }
+        if (
+          typeof url === "string" &&
+          url.startsWith(`${STORAGE_SERVICE_ENDPOINT}/api/v1/storage/`) &&
+          (options?.method === "GET" || options?.method == null)
+        ) {
+          const id = url.split("/").pop()!;
+          const data = records.get(id);
+          if (!data) {
+            return jsonResponse(404, { detail: "not found" });
+          }
+          return jsonResponse(200, {
+            id,
+            client_id: "MobileAppClient",
+            data,
+            metadata: {},
+          });
+        }
+        if (
+          typeof url === "string" &&
+          url.startsWith(`${STORAGE_SERVICE_ENDPOINT}/api/v1/storage/`) &&
+          options?.method === "DELETE"
+        ) {
+          const id = url.split("/").pop()!;
+          records.delete(id);
+          return jsonResponse(200, { message: "deleted" });
+        }
+        return jsonResponse(404, {});
+      }
+    );
+
+    const { getByText, getByTestId, queryByText } = await render(
+      <AuthProvider>
+        <TasksProvider>
+          <ScopedProbe />
+        </TasksProvider>
+      </AuthProvider>
     );
 
     await fireEvent.press(getByText("Login A"));
     await waitFor(() => {
       expect(getByTestId("auth-user-id").props.children).toBe("user-a");
     });
-    await fireEvent.press(getByText("Add Task A"));
-    expect(getByText(/Task A\|user-a/)).toBeTruthy();
+    await waitFor(() => {
+      expect(getByTestId("tasks-loading").props.children).toBe("no");
+    });
+
+    await act(async () => {
+      await fireEvent.press(getByText("Add Task A"));
+    });
+    await waitFor(() => {
+      expect(getByText(/Task A\|user-a/)).toBeTruthy();
+    });
 
     await fireEvent.press(getByText("Login B"));
     await waitFor(() => {
       expect(getByTestId("auth-user-id").props.children).toBe("user-b");
     });
+    await waitFor(() => {
+      expect(getByTestId("tasks-loading").props.children).toBe("no");
+    });
     expect(queryByText(/Task A\|user-a/)).toBeNull();
     expect(getByTestId("task-count").props.children).toBe(0);
 
-    await fireEvent.press(getByText("Add Task B"));
-    expect(getByText(/Task B\|user-b/)).toBeTruthy();
+    await act(async () => {
+      await fireEvent.press(getByText("Add Task B"));
+    });
+    await waitFor(() => {
+      expect(getByText(/Task B\|user-b/)).toBeTruthy();
+    });
     expect(queryByText(/Task A\|user-a/)).toBeNull();
     expect(getByTestId("task-count").props.children).toBe(1);
 
     await fireEvent.press(getByText("Login A"));
     await waitFor(() => {
       expect(getByTestId("auth-user-id").props.children).toBe("user-a");
+    });
+    await waitFor(() => {
+      expect(getByTestId("tasks-loading").props.children).toBe("no");
     });
     expect(getByText(/Task A\|user-a/)).toBeTruthy();
     expect(queryByText(/Task B\|user-b/)).toBeNull();

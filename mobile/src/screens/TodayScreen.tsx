@@ -4,7 +4,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   View,
 } from "react-native";
@@ -73,8 +72,6 @@ export function TodayScreen({ onLogout, onViewMatrix }: TodayScreenProps) {
     tasks,
     lastDeletedTaskId,
     undoDelete,
-    simulateFailure,
-    setSimulateFailure,
     scheduleTask,
     unscheduleTask,
   } = useTasks();
@@ -281,11 +278,7 @@ export function TodayScreen({ onLogout, onViewMatrix }: TodayScreenProps) {
       <View style={styles.header}>
         <Button label="Logout" onPress={handleLogoutPress} />
         <Title text="Channtto" />
-        <Switch
-          accessibilityLabel="Simulate network failure"
-          value={simulateFailure}
-          onValueChange={setSimulateFailure}
-        />
+        <View style={styles.headerSpacer} />
       </View>
 
       <View style={styles.body}>
@@ -492,6 +485,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+  },
+  headerSpacer: {
+    width: 64,
   },
   body: {
     flex: 1,
